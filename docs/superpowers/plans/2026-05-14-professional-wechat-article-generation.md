@@ -8,6 +8,8 @@
 
 **Tech Stack:** Next.js App Router, React client component, TypeScript, SQLite via `node:sqlite`, Vitest, Testing Library, OpenAI-compatible Chat Completions, OpenAI Images API.
 
+**Implementation Status:** Core implementation is complete through data model, writer, image client, orchestration, API routes, and workbench UI. Verification passed with `pnpm test`, `pnpm lint`, `pnpm build`, and a browser smoke check on `http://127.0.0.1:3002`.
+
 ---
 
 ## File Structure

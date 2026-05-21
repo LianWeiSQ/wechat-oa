@@ -684,6 +684,7 @@ export function Workbench({
 
   const workspaceKicker = activeWorkspace === "library" ? "TECH LIBRARY" : "WECHAT STUDIO";
   const nextThemeMode = themeMode === "dark" ? "light" : "dark";
+  const isLibraryEmptyState = activeWorkspace === "library" && !selectedArticle;
 
   function handleThemeModeToggle() {
     setThemeMode((current) => {
@@ -812,15 +813,17 @@ export function Workbench({
         ) : null}
 
         <section className="reader-stage">
-          <header className="reader-header">
-            <div className="reader-heading">
+          <header className={`reader-header ${isLibraryEmptyState ? "reader-header-empty" : ""}`}>
+            <div className={`reader-heading ${isLibraryEmptyState ? "reader-heading-empty" : ""}`}>
               <div className="kicker">{workspaceKicker}</div>
-              <h1 className="reader-title">{activeWorkspace === "wechat" ? "微信公众号生成" : selectedArticle?.title ?? "选择文章"}</h1>
+              <h1 className={`reader-title ${isLibraryEmptyState ? "reader-title-empty" : ""}`}>
+                {activeWorkspace === "wechat" ? "微信公众号生成" : selectedArticle?.title ?? "选择文章"}
+              </h1>
             </div>
             <div className="reader-toolbar">
               <button
                 type="button"
-                className="tool-button"
+                className="tool-button reader-rail-toggle"
                 aria-expanded={libraryRailOpen || libraryDrawerOpen}
                 onClick={() => {
                   if (libraryRailOpen) {

@@ -92,6 +92,36 @@ export function migrate(db: DatabaseSync): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS scheduled_article_tasks (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'scheduled',
+      schedule_type TEXT NOT NULL DEFAULT 'once',
+      scheduled_at TEXT NOT NULL,
+      next_run_at TEXT NOT NULL,
+      last_run_at TEXT NOT NULL DEFAULT '',
+      input_json TEXT NOT NULL,
+      draft_id TEXT,
+      error TEXT NOT NULL DEFAULT '',
+      run_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (draft_id) REFERENCES drafts(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS scheduled_article_runs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT NOT NULL DEFAULT '',
+      draft_id TEXT,
+      message TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (task_id) REFERENCES scheduled_article_tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (draft_id) REFERENCES drafts(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS draft_image_assets (
       id TEXT PRIMARY KEY,
       draft_id TEXT NOT NULL,
@@ -208,6 +238,8 @@ export function migrate(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_articles_updated_at ON articles(updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_analysis_runs_article_id ON analysis_runs(article_id);
     CREATE INDEX IF NOT EXISTS idx_topic_candidates_status ON topic_candidates(status);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_article_tasks_due ON scheduled_article_tasks(status, next_run_at);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_article_runs_task_id ON scheduled_article_runs(task_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_draft_image_assets_draft_id ON draft_image_assets(draft_id);
     CREATE INDEX IF NOT EXISTS idx_assets_sha256 ON assets(workspace_id, sha256);
     CREATE INDEX IF NOT EXISTS idx_asset_links_target ON asset_links(target_type, target_id);

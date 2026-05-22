@@ -3,6 +3,7 @@ import { createContentAgentStore } from "@/lib/content-agent";
 import { getAppDatabase } from "@/lib/db";
 import { createDraftImageStore } from "@/lib/draft-images";
 import { createDraftStore } from "@/lib/drafts";
+import { createScheduledArticleStore } from "@/lib/scheduled-generation";
 import { createSettingsStore } from "@/lib/settings";
 import { shouldUseSupabase } from "@/lib/supabase";
 import { createSupabaseStores } from "@/lib/supabase-stores";
@@ -18,6 +19,7 @@ export function stores() {
     articleStore: createArticleStore(db),
     contentAgentStore: createContentAgentStore(db),
     draftStore: createDraftStore(db),
+    scheduleStore: createScheduledArticleStore(db),
     draftImageStore: createDraftImageStore(db),
     settingsStore: createSettingsStore(db),
     writingStore: createWritingStore(db),

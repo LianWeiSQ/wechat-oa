@@ -10,6 +10,14 @@ import {
   toPublicWeChatConfig,
   unsealSecret,
 } from "@/lib/settings";
+import type {
+  CreateScheduledArticleTaskInput,
+  ScheduledArticleRun,
+  ScheduledArticleRunStatus,
+  ScheduledArticleScheduleType,
+  ScheduledArticleTask,
+  ScheduledArticleTaskStatus,
+} from "@/lib/scheduled-generation";
 import { getSupabaseConfig, getSupabaseServiceClient } from "@/lib/supabase";
 import type {
   AiSettings,
@@ -45,6 +53,7 @@ export function createSupabaseStores(client = getSupabaseServiceClient()) {
   const articleStore = createSupabaseArticleStore(client, workspaceId);
   const draftStore = createSupabaseDraftStore(client, workspaceId);
   const settingsStore = createSupabaseSettingsStore(client, workspaceId);
+  const scheduleStore = createSupabaseScheduledArticleStore(client, workspaceId);
   const draftImageStore = createSupabaseDraftImageStore(client, workspaceId);
   const contentAgentStore = createSupabaseContentAgentStore(client, workspaceId);
   const writingStore = createSupabaseWritingStore(client, workspaceId);
@@ -54,6 +63,7 @@ export function createSupabaseStores(client = getSupabaseServiceClient()) {
     contentAgentStore,
     draftStore,
     draftImageStore,
+    scheduleStore,
     settingsStore,
     writingStore,
   };
@@ -501,6 +511,217 @@ function createSupabaseDraftStore(client: SupabaseClient, workspaceId: string) {
   return store;
 }
 
+function createSupabaseScheduledArticleStore(client: SupabaseClient, workspaceId: string) {
+  return {
+    async createTask(input: CreateScheduledArticleTaskInput): Promise<ScheduledArticleTask> {
+      const timestamp = nowIso();
+      const nextRunAt = normalizeIsoDate(input.scheduledAt, "定时生成时间无效");
+      const task: ScheduledArticleTask = {
+        id: createId("schedule"),
+        name: input.name?.trim() || `${input.input.title.trim() || "公众号文章"} 定时生成`,
+        status: "scheduled",
+        scheduleType: input.scheduleType,
+        scheduledAt: nextRunAt,
+        nextRunAt,
+        lastRunAt: "",
+        input: input.input,
+        error: "",
+        runCount: 0,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      await ensureWorkspace(client, workspaceId);
+      const { error } = await client.from("scheduled_article_tasks").insert({
+        id: task.id,
+        workspace_id: workspaceId,
+        name: task.name,
+        status: task.status,
+        schedule_type: task.scheduleType,
+        scheduled_at: task.scheduledAt,
+        next_run_at: task.nextRunAt,
+        last_run_at: task.lastRunAt,
+        input: task.input,
+        draft_id: task.draftId ?? null,
+        error: task.error,
+        run_count: task.runCount,
+        created_at: task.createdAt,
+        updated_at: task.updatedAt,
+      });
+      assertNoError(error, "保存定时任务失败");
+      return task;
+    },
+
+    async getTask(id: string): Promise<ScheduledArticleTask | null> {
+      const { data, error } = await client
+        .from("scheduled_article_tasks")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .eq("id", id)
+        .maybeSingle();
+      assertNoError(error, "读取定时任务失败");
+      return data ? mapScheduledTask(data as JsonRecord) : null;
+    },
+
+    async listTasks(): Promise<ScheduledArticleTask[]> {
+      const { data, error } = await client
+        .from("scheduled_article_tasks")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false });
+      assertNoError(error, "读取定时任务列表失败");
+      return ((data ?? []) as JsonRecord[]).map(mapScheduledTask);
+    },
+
+    async listTasksWithRuns(runLimit = 5): Promise<ScheduledArticleTask[]> {
+      const tasks = await this.listTasks();
+      return Promise.all(
+        tasks.map(async (task) => ({
+          ...task,
+          runs: await this.listRuns(task.id, runLimit),
+        })),
+      );
+    },
+
+    async listDueTasks(now = nowIso(), limit = 10): Promise<ScheduledArticleTask[]> {
+      const { data, error } = await client
+        .from("scheduled_article_tasks")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .eq("status", "scheduled")
+        .lte("next_run_at", now)
+        .order("next_run_at", { ascending: true })
+        .limit(limit);
+      assertNoError(error, "读取到期定时任务失败");
+      return ((data ?? []) as JsonRecord[]).map(mapScheduledTask);
+    },
+
+    async listRuns(taskId: string, limit = 10): Promise<ScheduledArticleRun[]> {
+      const { data, error } = await client
+        .from("scheduled_article_runs")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .eq("task_id", taskId)
+        .order("started_at", { ascending: false })
+        .limit(limit);
+      assertNoError(error, "读取定时任务日志失败");
+      return ((data ?? []) as JsonRecord[]).map(mapScheduledRun);
+    },
+
+    async createRun(taskId: string): Promise<ScheduledArticleRun> {
+      const timestamp = nowIso();
+      const run: ScheduledArticleRun = {
+        id: createId("run"),
+        taskId,
+        status: "running",
+        startedAt: timestamp,
+        finishedAt: "",
+        message: "任务开始执行",
+        error: "",
+      };
+      const { error } = await client.from("scheduled_article_runs").insert({
+        id: run.id,
+        workspace_id: workspaceId,
+        task_id: run.taskId,
+        status: run.status,
+        started_at: run.startedAt,
+        finished_at: run.finishedAt,
+        draft_id: run.draftId ?? null,
+        message: run.message,
+        error: run.error,
+      });
+      assertNoError(error, "创建定时任务日志失败");
+      return run;
+    },
+
+    async markTaskRunning(taskId: string): Promise<ScheduledArticleTask | null> {
+      const { error } = await client
+        .from("scheduled_article_tasks")
+        .update({ status: "running", error: "", updated_at: nowIso() })
+        .eq("workspace_id", workspaceId)
+        .eq("id", taskId);
+      assertNoError(error, "更新定时任务状态失败");
+      return this.getTask(taskId);
+    },
+
+    async completeRun(input: {
+      task: ScheduledArticleTask;
+      runId: string;
+      draftId: string;
+      message?: string;
+      now?: string;
+    }): Promise<ScheduledArticleTask | null> {
+      const timestamp = input.now ?? nowIso();
+      const nextRunAt = nextScheduledRun(input.task, timestamp);
+      const nextStatus: ScheduledArticleTaskStatus = nextRunAt ? "scheduled" : "completed";
+      const runResult = await client
+        .from("scheduled_article_runs")
+        .update({
+          status: "completed",
+          finished_at: timestamp,
+          draft_id: input.draftId,
+          message: input.message ?? "已生成本地草稿",
+          error: "",
+        })
+        .eq("workspace_id", workspaceId)
+        .eq("id", input.runId);
+      assertNoError(runResult.error, "更新定时任务日志失败");
+      const taskResult = await client
+        .from("scheduled_article_tasks")
+        .update({
+          status: nextStatus,
+          next_run_at: nextRunAt || null,
+          last_run_at: timestamp,
+          draft_id: input.draftId,
+          error: "",
+          run_count: input.task.runCount + 1,
+          updated_at: timestamp,
+        })
+        .eq("workspace_id", workspaceId)
+        .eq("id", input.task.id);
+      assertNoError(taskResult.error, "完成定时任务失败");
+      return this.getTask(input.task.id);
+    },
+
+    async failRun(input: { task: ScheduledArticleTask; runId: string; error: string; now?: string }): Promise<ScheduledArticleTask | null> {
+      const timestamp = input.now ?? nowIso();
+      const runResult = await client
+        .from("scheduled_article_runs")
+        .update({ status: "failed", finished_at: timestamp, message: "执行失败", error: input.error })
+        .eq("workspace_id", workspaceId)
+        .eq("id", input.runId);
+      assertNoError(runResult.error, "更新失败日志失败");
+      const taskResult = await client
+        .from("scheduled_article_tasks")
+        .update({
+          status: "failed",
+          last_run_at: timestamp,
+          error: input.error,
+          run_count: input.task.runCount + 1,
+          updated_at: timestamp,
+        })
+        .eq("workspace_id", workspaceId)
+        .eq("id", input.task.id);
+      assertNoError(taskResult.error, "标记定时任务失败失败");
+      return this.getTask(input.task.id);
+    },
+
+    async rescheduleForRetry(taskId: string, nextRunAt = nowIso()): Promise<ScheduledArticleTask | null> {
+      const { error } = await client
+        .from("scheduled_article_tasks")
+        .update({
+          status: "scheduled",
+          next_run_at: normalizeIsoDate(nextRunAt, "重试时间无效"),
+          error: "",
+          updated_at: nowIso(),
+        })
+        .eq("workspace_id", workspaceId)
+        .eq("id", taskId);
+      assertNoError(error, "重试定时任务失败");
+      return this.getTask(taskId);
+    },
+  };
+}
+
 function createSupabaseDraftImageStore(client: SupabaseClient, workspaceId: string) {
   return {
     async createAsset(input: Omit<DraftImageAsset, "id" | "createdAt" | "updatedAt">): Promise<DraftImageAsset> {
@@ -946,6 +1167,37 @@ function mapDraftImageAsset(row: JsonRecord): DraftImageAsset {
   };
 }
 
+function mapScheduledTask(row: JsonRecord): ScheduledArticleTask {
+  return {
+    id: stringValue(row.id),
+    name: stringValue(row.name),
+    status: stringValue(row.status) as ScheduledArticleTaskStatus,
+    scheduleType: stringValue(row.schedule_type) as ScheduledArticleScheduleType,
+    scheduledAt: stringValue(row.scheduled_at),
+    nextRunAt: stringValue(row.next_run_at),
+    lastRunAt: stringValue(row.last_run_at),
+    input: objectValue(row.input) as ScheduledArticleTask["input"],
+    draftId: stringValue(row.draft_id) || undefined,
+    error: stringValue(row.error),
+    runCount: numberValue(row.run_count),
+    createdAt: stringValue(row.created_at),
+    updatedAt: stringValue(row.updated_at),
+  };
+}
+
+function mapScheduledRun(row: JsonRecord): ScheduledArticleRun {
+  return {
+    id: stringValue(row.id),
+    taskId: stringValue(row.task_id),
+    status: stringValue(row.status) as ScheduledArticleRunStatus,
+    startedAt: stringValue(row.started_at),
+    finishedAt: stringValue(row.finished_at),
+    draftId: stringValue(row.draft_id) || undefined,
+    message: stringValue(row.message),
+    error: stringValue(row.error),
+  };
+}
+
 function toArticleRow(article: Article, workspaceId: string) {
   return {
     id: article.id,
@@ -1001,6 +1253,30 @@ function normalizeContentHtml(input: ArticleInput): string {
 
 function normalizeContentText(input: ArticleInput, contentHtml: string): string {
   return (input.contentText ?? stripHtml(contentHtml)).trim();
+}
+
+function nextScheduledRun(task: ScheduledArticleTask, fromIso: string): string {
+  if (task.scheduleType === "once") {
+    return "";
+  }
+  const stepDays = task.scheduleType === "weekly" ? 7 : 1;
+  const next = new Date(task.nextRunAt || task.scheduledAt);
+  const from = new Date(fromIso);
+  if (Number.isNaN(next.getTime()) || Number.isNaN(from.getTime())) {
+    return "";
+  }
+  while (next <= from) {
+    next.setUTCDate(next.getUTCDate() + stepDays);
+  }
+  return next.toISOString();
+}
+
+function normalizeIsoDate(value: string, errorMessage: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(errorMessage);
+  }
+  return date.toISOString();
 }
 
 function sourceTypeValue(value: unknown): ArticleSourceType {

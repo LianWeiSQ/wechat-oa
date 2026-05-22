@@ -649,9 +649,10 @@ export function Workbench({
     applyStructureRuns(data.structureRuns ?? []);
     setDraftImageAssets([]);
     setSourceReuseWarnings(data.warnings ?? []);
+    const reviewScore = typeof data.review?.score === "number" ? `，审稿 ${data.review.score} 分` : "";
     setNotice({
       type: (data.warnings ?? []).length > 0 ? "info" : "ok",
-      text: (data.warnings ?? []).length > 0 ? "原创文章已生成，但发现疑似长句复用" : "原创文章草稿已生成",
+      text: (data.warnings ?? []).length > 0 ? `原创文章已生成${reviewScore}，但发现疑似长句复用` : `原创文章草稿已生成${reviewScore}`,
     });
   }
 

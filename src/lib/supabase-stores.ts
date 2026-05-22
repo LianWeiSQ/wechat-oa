@@ -646,10 +646,16 @@ function createSupabaseDraftImageStore(client: SupabaseClient, workspaceId: stri
 function createSupabaseSettingsStore(client: SupabaseClient, workspaceId: string) {
   return {
     async getAiSettings(): Promise<AiSettings> {
-      const saved = await getJson<Partial<AiSettings> & { apiKeyEncrypted?: string }>(client, workspaceId, "ai", {});
+      const saved = await getJson<Partial<AiSettings> & { apiKeyEncrypted?: string; reviewApiKeyEncrypted?: string }>(
+        client,
+        workspaceId,
+        "ai",
+        {},
+      );
       return normalizeAiSettings({
         ...saved,
         apiKey: saved.apiKeyEncrypted ? unsealSecret(saved.apiKeyEncrypted) : saved.apiKey,
+        reviewApiKey: saved.reviewApiKeyEncrypted ? unsealSecret(saved.reviewApiKeyEncrypted) : saved.reviewApiKey,
       });
     },
 
@@ -661,6 +667,11 @@ function createSupabaseSettingsStore(client: SupabaseClient, workspaceId: string
         apiKeyEncrypted: normalized.apiKey ? sealSecret(normalized.apiKey) : "",
         model: normalized.model,
         reviewModel: normalized.reviewModel,
+        reviewModelProvider: normalized.reviewModelProvider,
+        reviewBaseUrl: normalized.reviewBaseUrl,
+        reviewApiKeyEncrypted: normalized.reviewApiKey ? sealSecret(normalized.reviewApiKey) : "",
+        reviewWireApi: normalized.reviewWireApi,
+        reviewReasoningEffort: normalized.reviewReasoningEffort,
         wireApi: normalized.wireApi,
         reasoningEffort: normalized.reasoningEffort,
         disableResponseStorage: normalized.disableResponseStorage,

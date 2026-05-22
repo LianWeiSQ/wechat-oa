@@ -30,17 +30,31 @@ const DEFAULT_IMAGE_SIZE: ImageSize = "1536x1024";
 export function createSettingsStore(db: DatabaseSync) {
   return {
     getAiSettings(): AiSettings {
-      const saved = getJson<Partial<AiSettings> & { apiKeyEncrypted?: string }>(db, AI_KEY, {});
+      const saved = getJson<Partial<AiSettings> & { apiKeyEncrypted?: string; reviewApiKeyEncrypted?: string }>(db, AI_KEY, {});
+      const apiKey = saved.apiKeyEncrypted
+        ? unsealSecret(saved.apiKeyEncrypted)
+        : saved.apiKey ?? process.env.OPENAI_API_KEY ?? DEFAULT_AI_API_KEY;
+      const baseUrl = saved.baseUrl ?? process.env.OPENAI_BASE_URL ?? DEFAULT_AI_BASE_URL;
+      const modelProvider = saved.modelProvider ?? process.env.OPENAI_MODEL_PROVIDER ?? DEFAULT_AI_MODEL_PROVIDER;
+      const wireApi = normalizeAiWireApi(saved.wireApi ?? process.env.OPENAI_WIRE_API);
+      const reasoningEffort = normalizeAiReasoningEffort(saved.reasoningEffort ?? process.env.OPENAI_REASONING_EFFORT);
       return {
-        modelProvider: saved.modelProvider ?? process.env.OPENAI_MODEL_PROVIDER ?? DEFAULT_AI_MODEL_PROVIDER,
-        baseUrl: saved.baseUrl ?? process.env.OPENAI_BASE_URL ?? DEFAULT_AI_BASE_URL,
-        apiKey: saved.apiKeyEncrypted
-          ? unsealSecret(saved.apiKeyEncrypted)
-          : saved.apiKey ?? process.env.OPENAI_API_KEY ?? DEFAULT_AI_API_KEY,
+        modelProvider,
+        baseUrl,
+        apiKey,
         model: saved.model ?? process.env.OPENAI_MODEL ?? DEFAULT_AI_MODEL,
         reviewModel: saved.reviewModel ?? process.env.OPENAI_REVIEW_MODEL ?? DEFAULT_AI_REVIEW_MODEL,
-        wireApi: normalizeAiWireApi(saved.wireApi ?? process.env.OPENAI_WIRE_API),
-        reasoningEffort: normalizeAiReasoningEffort(saved.reasoningEffort ?? process.env.OPENAI_REASONING_EFFORT),
+        reviewModelProvider: saved.reviewModelProvider ?? process.env.OPENAI_REVIEW_MODEL_PROVIDER ?? modelProvider,
+        reviewBaseUrl: saved.reviewBaseUrl ?? process.env.OPENAI_REVIEW_BASE_URL ?? baseUrl,
+        reviewApiKey: saved.reviewApiKeyEncrypted
+          ? unsealSecret(saved.reviewApiKeyEncrypted)
+          : saved.reviewApiKey ?? process.env.OPENAI_REVIEW_API_KEY ?? apiKey,
+        reviewWireApi: normalizeAiWireApi(saved.reviewWireApi ?? process.env.OPENAI_REVIEW_WIRE_API ?? wireApi),
+        reviewReasoningEffort: normalizeAiReasoningEffort(
+          saved.reviewReasoningEffort ?? process.env.OPENAI_REVIEW_REASONING_EFFORT ?? reasoningEffort,
+        ),
+        wireApi,
+        reasoningEffort,
         disableResponseStorage: normalizeBoolean(
           saved.disableResponseStorage ?? process.env.OPENAI_DISABLE_RESPONSE_STORAGE,
           DEFAULT_AI_DISABLE_RESPONSE_STORAGE,
@@ -56,6 +70,11 @@ export function createSettingsStore(db: DatabaseSync) {
         apiKeyEncrypted: normalized.apiKey ? sealSecret(normalized.apiKey) : "",
         model: normalized.model,
         reviewModel: normalized.reviewModel,
+        reviewModelProvider: normalized.reviewModelProvider,
+        reviewBaseUrl: normalized.reviewBaseUrl,
+        reviewApiKeyEncrypted: normalized.reviewApiKey ? sealSecret(normalized.reviewApiKey) : "",
+        reviewWireApi: normalized.reviewWireApi,
+        reviewReasoningEffort: normalized.reviewReasoningEffort,
         wireApi: normalized.wireApi,
         reasoningEffort: normalized.reasoningEffort,
         disableResponseStorage: normalized.disableResponseStorage,
@@ -159,14 +178,27 @@ export function toPublicImageSettings(settings: ImageSettings): PublicImageSetti
 }
 
 export function normalizeAiSettings(input: Partial<AiSettings>, current?: AiSettings): AiSettings {
+  const modelProvider = input.modelProvider?.trim() || current?.modelProvider || DEFAULT_AI_MODEL_PROVIDER;
+  const baseUrl = input.baseUrl?.trim() || current?.baseUrl || DEFAULT_AI_BASE_URL;
+  const apiKey = input.apiKey?.trim() || current?.apiKey || process.env.OPENAI_API_KEY || DEFAULT_AI_API_KEY;
+  const model = input.model?.trim() || current?.model || DEFAULT_AI_MODEL;
+  const wireApi = normalizeAiWireApi(input.wireApi ?? current?.wireApi);
+  const reasoningEffort = normalizeAiReasoningEffort(input.reasoningEffort ?? current?.reasoningEffort);
   return {
-    modelProvider: input.modelProvider?.trim() || current?.modelProvider || DEFAULT_AI_MODEL_PROVIDER,
-    baseUrl: input.baseUrl?.trim() || current?.baseUrl || DEFAULT_AI_BASE_URL,
-    apiKey: input.apiKey?.trim() || current?.apiKey || process.env.OPENAI_API_KEY || DEFAULT_AI_API_KEY,
-    model: input.model?.trim() || current?.model || DEFAULT_AI_MODEL,
-    reviewModel: input.reviewModel?.trim() || current?.reviewModel || input.model?.trim() || DEFAULT_AI_REVIEW_MODEL,
-    wireApi: normalizeAiWireApi(input.wireApi ?? current?.wireApi),
-    reasoningEffort: normalizeAiReasoningEffort(input.reasoningEffort ?? current?.reasoningEffort),
+    modelProvider,
+    baseUrl,
+    apiKey,
+    model,
+    reviewModel: input.reviewModel?.trim() || current?.reviewModel || model || DEFAULT_AI_REVIEW_MODEL,
+    reviewModelProvider: input.reviewModelProvider?.trim() || current?.reviewModelProvider || modelProvider,
+    reviewBaseUrl: input.reviewBaseUrl?.trim() || current?.reviewBaseUrl || baseUrl,
+    reviewApiKey: input.reviewApiKey?.trim() || current?.reviewApiKey || apiKey,
+    reviewWireApi: normalizeAiWireApi(input.reviewWireApi ?? current?.reviewWireApi ?? wireApi),
+    reviewReasoningEffort: normalizeAiReasoningEffort(
+      input.reviewReasoningEffort ?? current?.reviewReasoningEffort ?? reasoningEffort,
+    ),
+    wireApi,
+    reasoningEffort,
     disableResponseStorage: normalizeBoolean(
       input.disableResponseStorage ?? current?.disableResponseStorage,
       DEFAULT_AI_DISABLE_RESPONSE_STORAGE,

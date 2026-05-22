@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createArticleStore } from "@/lib/articles";
 import { openDatabase } from "@/lib/db";
 import { importManualArticle, importUrlArticle } from "@/lib/importers";
+import type { Article, ArticleInput } from "@/lib/types";
 
 let tempDir: string;
 let store: ReturnType<typeof createArticleStore>;
@@ -19,9 +20,13 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 
+function importManual(input: ArticleInput): Article {
+  return importManualArticle(store, input) as Article;
+}
+
 describe("article importing", () => {
   it("imports a manual article and persists metadata, tags, and content", () => {
-    const article = importManualArticle(store, {
+    const article = importManual({
       title: "GPT-5.5 工程化路线拆解",
       sourceName: "AI Infra Notes",
       originalUrl: "https://example.com/manual-1",
@@ -41,14 +46,14 @@ describe("article importing", () => {
   });
 
   it("returns the existing article when the same original URL is imported twice", () => {
-    const first = importManualArticle(store, {
+    const first = importManual({
       title: "第一次标题",
       sourceName: "AI Account",
       originalUrl: "https://mp.weixin.qq.com/s/duplicate",
       contentText: "first",
       tags: [],
     });
-    const second = importManualArticle(store, {
+    const second = importManual({
       title: "第二次标题",
       sourceName: "AI Account",
       originalUrl: "https://mp.weixin.qq.com/s/duplicate",
@@ -62,7 +67,7 @@ describe("article importing", () => {
   });
 
   it("refreshes an existing URL article when the link is parsed again", async () => {
-    const existing = importManualArticle(store, {
+    const existing = importManual({
       title: "旧标题",
       sourceName: "AI Account",
       originalUrl: "https://mp.weixin.qq.com/s/refresh",
@@ -273,7 +278,7 @@ describe("article importing", () => {
   });
 
   it("updates article content so users can manually clean imported articles", () => {
-    const article = importManualArticle(store, {
+    const article = importManual({
       title: "待编辑文章",
       sourceName: "AI Account",
       contentHtml: "<p>旧正文</p>",
@@ -293,7 +298,7 @@ describe("article importing", () => {
   });
 
   it("persists article favorite status for knowledge management", () => {
-    const article = importManualArticle(store, {
+    const article = importManual({
       title: "值得反复读的文章",
       sourceName: "AI Account",
       contentText: "这篇文章需要后续重点回看。",
@@ -308,7 +313,7 @@ describe("article importing", () => {
   });
 
   it("deletes articles from the local library", () => {
-    const article = importManualArticle(store, {
+    const article = importManual({
       title: "待删除文章",
       sourceName: "AI Account",
       contentText: "这篇文章会被删除",

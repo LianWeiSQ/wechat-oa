@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createOriginalDraftRequest,
+  createReviewAiSettings,
+  createTechnicalBriefRequest,
   createWritingStructureRequest,
   ensureWritingStructureRuns,
   findSourceReuseWarnings,
   generateOriginalDraftFromTopic,
   generateWritingBlueprint,
+  parseDraftReviewResponse,
+  parseOriginalDraftResponse,
+  parseTechnicalBriefResponse,
   parseWritingBlueprintResponse,
   parseWritingStructureResponse,
 } from "@/lib/writing-agent";
@@ -41,7 +46,11 @@ const secondArticle: Article = {
 const settings: AiSettings = {
   baseUrl: "https://api.example.com/v1",
   apiKey: "sk-test",
-  model: "gpt-5.2",
+  model: "MiniMax-M2.7",
+  reviewModel: "deepseek-v4-pro",
+  reviewBaseUrl: "http://localhost:8080/v1",
+  reviewApiKey: "sk-review",
+  reviewWireApi: "chat-completions",
 };
 
 const structureRun: WritingStructureRun = {
@@ -142,6 +151,16 @@ describe("writing structure agent", () => {
         updatedAt: "now",
       },
       structureRuns: [structureRun],
+      technicalBrief: {
+        targetReader: "想转 Agent 的后端工程师",
+        topicJudgment: "从模型选型转向工程闭环。",
+        coreClaim: "Harness 决定 Agent 能不能稳定跑完任务。",
+        verifiedFacts: ["参考文章讨论工具权限和状态管理"],
+        sourceBoundaries: ["不要写死不存在的源码路径"],
+        sectionBrief: [{ title: "真实场景", mustSay: ["状态恢复"], evidence: ["参考文章"], avoid: ["假事故"] }],
+        riskFlags: ["虚假场景风险"],
+        styleInstructions: ["短段落"],
+      },
       model: "gpt-5.2",
     });
     const prompt = request.messages.map((message) => message.content).join("\n");
@@ -149,7 +168,70 @@ describe("writing structure agent", () => {
     expect(prompt).toContain("想转 Agent 工程师");
     expect(prompt).toContain("不洗稿");
     expect(prompt).toContain("不要课程、社群、资料领取");
-    expect(prompt).toContain("真实场景开头 -> 反常识判断");
+    expect(prompt).toContain("选题判断");
+    expect(prompt).toContain("读者画像");
+    expect(prompt).toContain("公众号手感");
+    expect(prompt).toContain("editorialScore");
+    expect(prompt).toContain("技术骨架 Agent 输出");
+  });
+
+  it("builds technical brief prompts and derives review settings", () => {
+    const reviewSettings = createReviewAiSettings(settings);
+    expect(reviewSettings.model).toBe("deepseek-v4-pro");
+    expect(reviewSettings.baseUrl).toBe("http://localhost:8080/v1");
+
+    const request = createTechnicalBriefRequest({
+      topic: "Agent Harness 怎么落地？",
+      articles: [article],
+      structureRuns: [structureRun],
+      model: reviewSettings.model,
+    });
+    const prompt = request.messages.map((message) => message.content).join("\n");
+
+    expect(prompt).toContain("事实边界");
+    expect(prompt).toContain("不能写死");
+    expect(prompt).toContain("sourceBoundaries");
+  });
+
+  it("parses technical briefs and draft reviews", () => {
+    const brief = parseTechnicalBriefResponse({
+      目标读者: "Agent 平台工程师",
+      选题判断: "Harness 是落地瓶颈。",
+      核心观点: "模型负责能力，Harness 负责稳定性。",
+      可验证事实: ["参考文章讨论 ThreadState"],
+      事实边界: ["源码路径需核验"],
+      章节骨架: [{ 标题: "状态管理", 必须讲: ["唯一状态源"], 证据: ["ThreadState"], 避免: ["编造事故"] }],
+      风险: ["事实风险"],
+      表达要求: ["短段落"],
+    });
+    expect(brief.coreClaim).toContain("Harness");
+    expect(brief.sectionBrief[0].evidence).toContain("ThreadState");
+
+    const review = parseDraftReviewResponse(
+      {
+        review: {
+          score: 83,
+          passed: true,
+          factIssues: ["删除未核验路径"],
+          fakeSceneIssues: [],
+          ctaIssues: [],
+          styleIssues: [],
+          compressionNotes: ["压缩开头"],
+          revisionSummary: "已修订。",
+          revisedDraft: {
+            title: "Harness 决定 Agent 下限",
+            bodyHtml: "<h1>Harness 决定 Agent 下限</h1>",
+          },
+        },
+      },
+      {
+        title: "旧稿",
+        deck: "",
+        bodyHtml: "<h1>旧稿</h1>",
+      },
+    );
+    expect(review.score).toBe(83);
+    expect(review.revisedDraft?.title).toBe("Harness 决定 Agent 下限");
   });
 
   it("creates a draft and flags copied long source sentences", async () => {
@@ -166,24 +248,180 @@ describe("writing structure agent", () => {
       })),
     };
 
+    const modelClient = vi
+      .fn()
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          targetReader: "想转 Agent 的后端工程师",
+          topicJudgment: "读者需要从 API 调用转向工程闭环。",
+          coreClaim: "Agent 工程的分水岭不是会不会调 API，而是能不能搭出工程闭环。",
+          verifiedFacts: ["参考文章提到任务拆解、工具权限、状态管理和评估闭环"],
+          sourceBoundaries: ["不要编造团队事故"],
+          sectionBrief: [{ title: "工程闭环", mustSay: ["状态管理"], evidence: ["参考文章"], avoid: ["卖课 CTA"] }],
+          riskFlags: ["长句复用风险"],
+          styleInstructions: ["公众号短段落"],
+        }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+            title: "Agent 转型能力",
+            deck: "别只会调 API。",
+            readerProfile: "想转 Agent 的后端工程师",
+            coreClaim: "Agent 工程的分水岭不是会不会调 API，而是能不能搭出工程闭环。",
+            titleOptions: ["Agent 转型能力", "别只会调 API"],
+            bodyHtml:
+              "<h1>Agent 转型能力</h1><p>很多人只会调 API，但 Agent 项目真正难在任务拆解、工具权限、状态管理和评估闭环。</p>",
+            editorialScore: {
+              total: 78,
+              topic: 80,
+              readerFit: 76,
+              opening: 72,
+              viewpoint: 82,
+              evidence: 70,
+              pacing: 78,
+              wechatReadability: 75,
+              originality: 80,
+              notes: ["观点清楚"],
+              revisionPriority: ["补真实项目细节"],
+            },
+          }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          score: 80,
+          passed: false,
+          factIssues: [],
+          fakeSceneIssues: [],
+          ctaIssues: [],
+          styleIssues: ["标题偏平"],
+          compressionNotes: ["压缩开头"],
+          revisionSummary: "保留核心判断，删掉冗余。",
+          revisedDraft: {
+            title: "别只会调 API，Agent 真正难在工程闭环",
+            deck: "状态、工具和评估才是分水岭。",
+            readerProfile: "想转 Agent 的后端工程师",
+            coreClaim: "Agent 工程的分水岭不是会不会调 API，而是能不能搭出工程闭环。",
+            titleOptions: ["别只会调 API，Agent 真正难在工程闭环"],
+            bodyHtml:
+              "<h1>别只会调 API，Agent 真正难在工程闭环</h1><p>很多人只会调 API，但 Agent 项目真正难在任务拆解、工具权限、状态管理和评估闭环。</p>",
+            editorialScore: {
+              total: 80,
+              topic: 80,
+              readerFit: 78,
+              opening: 76,
+              viewpoint: 82,
+              evidence: 74,
+              pacing: 80,
+              wechatReadability: 82,
+              originality: 80,
+              notes: ["审稿后标题更明确"],
+              revisionPriority: ["补真实项目细节"],
+            },
+          },
+        }),
+      );
+
     const result = await generateOriginalDraftFromTopic({
       topic: "Agent 转型能力",
       articles: [article],
       structureRuns: [structureRun],
       settings,
+      reviewSettings: createReviewAiSettings(settings),
       draftStore,
-      modelClient: async () =>
-        JSON.stringify({
-          title: "Agent 转型能力",
-          deck: "别只会调 API。",
-          bodyHtml:
-            "<h1>Agent 转型能力</h1><p>很多人只会调 API，但 Agent 项目真正难在任务拆解、工具权限、状态管理和评估闭环。</p>",
-        }),
+      modelClient,
     });
 
-    expect(result.draft.title).toBe("Agent 转型能力");
+    expect(result.draft.title).toBe("别只会调 API，Agent 真正难在工程闭环");
+    expect(result.draftBeforeReview.title).toBe("Agent 转型能力");
+    expect(result.originalDraft.editorialScore?.total).toBe(80);
+    expect(result.review.styleIssues).toContain("标题偏平");
     expect(result.warnings[0].matchedText).toContain("很多人只会调 API");
+    expect(modelClient).toHaveBeenNthCalledWith(1, expect.objectContaining({ model: "deepseek-v4-pro" }), expect.objectContaining({ model: "deepseek-v4-pro" }));
+    expect(modelClient).toHaveBeenNthCalledWith(2, expect.objectContaining({ model: "MiniMax-M2.7" }), expect.objectContaining({ model: "MiniMax-M2.7" }));
+    expect(modelClient).toHaveBeenNthCalledWith(3, expect.objectContaining({ model: "deepseek-v4-pro" }), expect.objectContaining({ model: "deepseek-v4-pro" }));
     expect(draftStore.createDraft).toHaveBeenCalled();
+  });
+
+  it("parses draft JSON when the model leaves raw newlines inside HTML strings", () => {
+    const parsed = parseOriginalDraftResponse(`{
+      "title": "Harness 工程拆解",
+      "deck": "别只看模型能力。",
+      "readerProfile": "想转 Agent 的后端工程师",
+      "coreClaim": "Agent 要上线，关键是失败后还能恢复。",
+      "titleOptions": ["别只看模型能力", "Agent 要上线，先补 Harness"],
+      "bodyHtml": "<h1>Harness 工程拆解</h1>
+<p>真正难的是状态、工具和恢复闭环。</p>",
+      "editorialScore": {
+        "total": 81,
+        "topic": 82,
+        "readerFit": 80,
+        "opening": 78,
+        "viewpoint": 85,
+        "evidence": 76,
+        "pacing": 80,
+        "wechatReadability": 82,
+        "originality": 80,
+        "notes": ["比技术文档更有读者入口"],
+        "revisionPriority": ["继续补证据"]
+      }
+    }`);
+
+    expect(parsed.title).toBe("Harness 工程拆解");
+    expect(parsed.bodyHtml).toContain("恢复闭环");
+    expect(parsed.readerProfile).toContain("后端工程师");
+    expect(parsed.editorialScore?.total).toBe(81);
+  });
+
+  it("parses JSON when the model prepends thinking text", () => {
+    const parsed = parseWritingStructureResponse(`<think>先判断文章结构，再输出严格 JSON。</think>
+    \`\`\`json
+    {
+      "structure": {
+        "titlePattern": "反常识判断 + 工程落点",
+        "openingHook": "线上故障场景",
+        "pressurePoint": "只会调模型无法上线",
+        "ethicalRewrite": "用具体失败模式提醒风险",
+        "technicalBackbone": ["状态管理", "工具权限", "可恢复执行"],
+        "evidencePattern": ["事故复盘", "模块拆解"],
+        "pacingPattern": "场景 -> 判断 -> 拆解 -> 建议",
+        "reusableMoves": ["先给冲突判断", "再给工程框架"],
+        "antiPatterns": ["卖课 CTA"]
+      },
+      "qualityScore": 84
+    }`);
+
+    expect(parsed.qualityScore).toBe(84);
+    expect(parsed.structure.technicalBackbone).toContain("状态管理");
+  });
+
+  it("parses draft JSON wrapped by a model and repairs quotes in bodyHtml", () => {
+    const parsed = parseOriginalDraftResponse(`{
+      "draft": {
+        "title": "Harness 不是模型问题",
+        "deck": "让 Agent 稳定跑起来才是工程题。",
+        "readerProfile": "做 Agent 的后端工程师",
+        "coreClaim": "Harness 决定 Agent 能不能稳定做完任务。",
+        "titleOptions": ["Harness 不是模型问题"],
+        "bodyHtml": "<h1>Harness 不是模型问题</h1><p>Agent 开始随机"失忆"，这不是模型问题。</p>",
+        "editorialScore": {
+          "total": 82,
+          "topic": 82,
+          "readerFit": 80,
+          "opening": 78,
+          "viewpoint": 84,
+          "evidence": 78,
+          "pacing": 82,
+          "wechatReadability": 84,
+          "originality": 80,
+          "notes": ["观点清楚"],
+          "revisionPriority": ["补真实工程细节"]
+        }
+      }
+    }`);
+
+    expect(parsed.title).toBe("Harness 不是模型问题");
+    expect(parsed.bodyHtml).toContain('随机"失忆"');
+    expect(parsed.editorialScore?.total).toBe(82);
   });
 
   it("finds reused source text in generated HTML", () => {

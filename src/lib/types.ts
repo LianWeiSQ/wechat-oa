@@ -279,10 +279,58 @@ export type SourceReuseWarning = {
   matchedText: string;
 };
 
+export type EditorialScore = {
+  total: number;
+  topic: number;
+  readerFit: number;
+  opening: number;
+  viewpoint: number;
+  evidence: number;
+  pacing: number;
+  wechatReadability: number;
+  originality: number;
+  notes: string[];
+  revisionPriority: string[];
+};
+
+export type WritingTechnicalBriefSection = {
+  title: string;
+  mustSay: string[];
+  evidence: string[];
+  avoid: string[];
+};
+
+export type WritingTechnicalBrief = {
+  targetReader: string;
+  topicJudgment: string;
+  coreClaim: string;
+  verifiedFacts: string[];
+  sourceBoundaries: string[];
+  sectionBrief: WritingTechnicalBriefSection[];
+  riskFlags: string[];
+  styleInstructions: string[];
+};
+
 export type OriginalArticleDraft = {
   title: string;
   deck: string;
   bodyHtml: string;
+  readerProfile?: string;
+  coreClaim?: string;
+  titleOptions?: string[];
+  editorialScore?: EditorialScore;
+};
+
+export type DraftReview = {
+  score: number;
+  passed: boolean;
+  factIssues: string[];
+  fakeSceneIssues: string[];
+  ctaIssues: string[];
+  styleIssues: string[];
+  compressionNotes: string[];
+  revisionSummary: string;
+  revisedDraft?: OriginalArticleDraft;
 };
 
 export type AiWireApi = "chat-completions" | "responses";
@@ -295,6 +343,11 @@ export type AiSettings = {
   apiKey: string;
   model: string;
   reviewModel?: string;
+  reviewModelProvider?: string;
+  reviewBaseUrl?: string;
+  reviewApiKey?: string;
+  reviewWireApi?: AiWireApi;
+  reviewReasoningEffort?: AiReasoningEffort;
   wireApi?: AiWireApi;
   reasoningEffort?: AiReasoningEffort;
   disableResponseStorage?: boolean;

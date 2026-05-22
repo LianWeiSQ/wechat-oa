@@ -1,5 +1,5 @@
 import { errorJson, stores } from "@/app/api/_helpers";
-import { ensureWritingStructureRuns, generateOriginalDraftFromTopic } from "@/lib/writing-agent";
+import { createReviewAiSettings, ensureWritingStructureRuns, generateOriginalDraftFromTopic } from "@/lib/writing-agent";
 import type { Article } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -30,9 +30,10 @@ export async function POST(request: Request) {
     }
 
     const settings = await settingsStore.getAiSettings();
+    const reviewSettings = createReviewAiSettings(settings);
     const structureRuns = await ensureWritingStructureRuns({
       articles,
-      settings,
+      settings: reviewSettings,
       writingStore,
     });
     const blueprint = blueprintId?.trim() ? await writingStore.getBlueprint(blueprintId.trim()) : null;
@@ -46,6 +47,7 @@ export async function POST(request: Request) {
       blueprint,
       structureRuns,
       settings,
+      reviewSettings,
       draftStore,
     });
 

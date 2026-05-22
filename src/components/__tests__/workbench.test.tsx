@@ -598,6 +598,7 @@ describe("Workbench", () => {
       contentText: "LLM evaluation needs lifecycle thinking.",
       content: "LLM evaluation needs lifecycle thinking.",
       category: "AI 研究",
+      isFavorite: false,
       tags: ["eval", "llm"],
       createdAt: "2026-05-15T00:00:00.000Z",
       updatedAt: "2026-05-15T00:00:00.000Z",

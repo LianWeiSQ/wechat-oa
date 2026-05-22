@@ -46,6 +46,11 @@ export function SettingsPage({ initialAiSettings, initialImageSettings, initialW
       apiKey: String(form.get("apiKey") ?? ""),
       model: String(form.get("model") ?? ""),
       reviewModel: String(form.get("reviewModel") ?? ""),
+      reviewModelProvider: String(form.get("reviewModelProvider") ?? ""),
+      reviewBaseUrl: String(form.get("reviewBaseUrl") ?? ""),
+      reviewApiKey: String(form.get("reviewApiKey") ?? ""),
+      reviewWireApi: String(form.get("reviewWireApi") ?? "") as AiWireApi,
+      reviewReasoningEffort: String(form.get("reviewReasoningEffort") ?? "") as AiReasoningEffort,
       wireApi: String(form.get("wireApi") ?? "") as AiWireApi,
       reasoningEffort: String(form.get("reasoningEffort") ?? "") as AiReasoningEffort,
       disableResponseStorage: form.get("disableResponseStorage") === "on",
@@ -141,7 +146,6 @@ export function SettingsPage({ initialAiSettings, initialImageSettings, initialW
             <input name="modelProvider" defaultValue={aiSettings.modelProvider ?? "crs"} placeholder="Provider，例如 crs" className={inputClassName} />
             <input name="baseUrl" defaultValue={aiSettings.baseUrl} placeholder="Base URL" className={inputClassName} />
             <input name="model" defaultValue={aiSettings.model} placeholder="模型名" className={inputClassName} />
-            <input name="reviewModel" defaultValue={aiSettings.reviewModel ?? aiSettings.model} placeholder="Review 模型名" className={inputClassName} />
             <div className="settings-two-col">
               <select name="wireApi" defaultValue={aiSettings.wireApi ?? "responses"} className={inputClassName}>
                 <option value="responses">Responses API</option>
@@ -157,6 +161,47 @@ export function SettingsPage({ initialAiSettings, initialImageSettings, initialW
               </select>
             </div>
             <input name="apiKey" type="password" defaultValue={aiSettings.apiKey} placeholder="API Key" className={inputClassName} />
+            <div className="settings-card-title">
+              <h2>技术/审稿模型</h2>
+            </div>
+            <input
+              name="reviewModelProvider"
+              defaultValue={aiSettings.reviewModelProvider ?? aiSettings.modelProvider ?? "crs"}
+              placeholder="审稿 Provider"
+              className={inputClassName}
+            />
+            <input
+              name="reviewBaseUrl"
+              defaultValue={aiSettings.reviewBaseUrl ?? aiSettings.baseUrl}
+              placeholder="审稿 Base URL"
+              className={inputClassName}
+            />
+            <input name="reviewModel" defaultValue={aiSettings.reviewModel ?? aiSettings.model} placeholder="审稿模型名" className={inputClassName} />
+            <div className="settings-two-col">
+              <select name="reviewWireApi" defaultValue={aiSettings.reviewWireApi ?? aiSettings.wireApi ?? "responses"} className={inputClassName}>
+                <option value="responses">Responses API</option>
+                <option value="chat-completions">Chat Completions</option>
+              </select>
+              <select
+                name="reviewReasoningEffort"
+                defaultValue={aiSettings.reviewReasoningEffort ?? aiSettings.reasoningEffort ?? "xhigh"}
+                className={inputClassName}
+              >
+                <option value="none">none</option>
+                <option value="minimal">minimal</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+              </select>
+            </div>
+            <input
+              name="reviewApiKey"
+              type="password"
+              defaultValue={aiSettings.reviewApiKey ?? aiSettings.apiKey}
+              placeholder="审稿 API Key"
+              className={inputClassName}
+            />
             <label className="settings-checkbox-line">
               <input name="disableResponseStorage" type="checkbox" defaultChecked={aiSettings.disableResponseStorage ?? true} />
               <span>禁用 Responses 存储</span>

@@ -9,6 +9,7 @@ const aiSettings = {
   apiKey: "sk-test",
   model: "gpt-5.4",
   reviewModel: "gpt-5.4",
+  reviewBaseUrl: "https://review.example.com/v1",
   wireApi: "responses" as const,
   reasoningEffort: "xhigh" as const,
   disableResponseStorage: true,
@@ -49,6 +50,7 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("heading", { name: "微信后台" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "返回工作台" })).toHaveAttribute("href", "/");
     expect(screen.getByDisplayValue("https://vip.auto-code.net")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("https://review.example.com/v1")).toBeInTheDocument();
     expect(screen.getByDisplayValue("gpt-image-2")).toBeInTheDocument();
   });
 

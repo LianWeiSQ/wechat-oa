@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, Image as ImageIcon, Save, Send, Settings } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Image as ImageIcon, Save, Send, Settings } from "lucide-react";
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type {
@@ -130,12 +130,13 @@ export function SettingsPage({ initialAiSettings, initialImageSettings, initialW
     <main className="settings-shell" data-theme="light">
       <header className="settings-topbar">
         <Link href="/" className="settings-back-link">
-          wechat-oa
+          <ArrowLeft className="h-4 w-4" />
+          返回工作台
         </Link>
         <div className="settings-topbar-actions">
           {notice ? <SettingsNotice notice={notice} /> : null}
-          <Link href="/" className="settings-icon-button" aria-label="返回工作台">
-            <Settings className="h-4 w-4" />
+          <Link href="/" className="settings-icon-button" aria-label="打开工作台">
+            工作台
           </Link>
         </div>
       </header>
@@ -143,65 +144,102 @@ export function SettingsPage({ initialAiSettings, initialImageSettings, initialW
       <section className="settings-page-stack" aria-label="配置中心">
         <SettingsCard icon={<Settings className="h-5 w-5" />} title="模型配置">
           <form className="settings-form" onSubmit={handleSaveAiSettings}>
-            <input name="modelProvider" defaultValue={aiSettings.modelProvider ?? "OpenAI"} placeholder="Provider，例如 OpenAI" className={inputClassName} />
-            <input name="baseUrl" defaultValue={aiSettings.baseUrl} placeholder="Base URL" className={inputClassName} />
-            <input name="model" defaultValue={aiSettings.model} placeholder="模型名" className={inputClassName} />
+            <label className="settings-field-block">
+              <span>文本模型服务商</span>
+              <input name="modelProvider" defaultValue={aiSettings.modelProvider ?? "OpenAI"} placeholder="Provider，例如 OpenAI" className={inputClassName} />
+            </label>
+            <label className="settings-field-block">
+              <span>文本模型 Base URL</span>
+              <input name="baseUrl" defaultValue={aiSettings.baseUrl} placeholder="例如 http://localhost:8080" className={inputClassName} />
+            </label>
+            <label className="settings-field-block">
+              <span>文本模型名称</span>
+              <input name="model" defaultValue={aiSettings.model} placeholder="模型名" className={inputClassName} />
+            </label>
             <div className="settings-two-col">
-              <select name="wireApi" defaultValue={aiSettings.wireApi ?? "responses"} className={inputClassName}>
-                <option value="responses">Responses API</option>
-                <option value="chat-completions">Chat Completions</option>
-              </select>
-              <select name="reasoningEffort" defaultValue={aiSettings.reasoningEffort ?? "xhigh"} className={inputClassName}>
-                <option value="none">none</option>
-                <option value="minimal">minimal</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-              </select>
+              <label className="settings-field-block">
+                <span>调用格式</span>
+                <select name="wireApi" defaultValue={aiSettings.wireApi ?? "responses"} className={inputClassName}>
+                  <option value="responses">Responses API</option>
+                  <option value="chat-completions">Chat Completions</option>
+                </select>
+              </label>
+              <label className="settings-field-block">
+                <span>推理强度</span>
+                <select name="reasoningEffort" defaultValue={aiSettings.reasoningEffort ?? "xhigh"} className={inputClassName}>
+                  <option value="none">none</option>
+                  <option value="minimal">minimal</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                </select>
+              </label>
             </div>
-            <input name="apiKey" type="password" defaultValue={aiSettings.apiKey} placeholder="API Key" className={inputClassName} />
-            <div className="settings-card-title">
+            <label className="settings-field-block">
+              <span>文本模型 API Key</span>
+              <input name="apiKey" type="password" defaultValue={aiSettings.apiKey} placeholder="API Key" className={inputClassName} />
+            </label>
+            <div className="settings-section-title">
               <h2>技术/审稿模型</h2>
+              <p>不单独填写时，默认复用上面的文本模型配置。</p>
             </div>
-            <input
-              name="reviewModelProvider"
-              defaultValue={aiSettings.reviewModelProvider ?? aiSettings.modelProvider ?? "OpenAI"}
-              placeholder="审稿 Provider"
-              className={inputClassName}
-            />
-            <input
-              name="reviewBaseUrl"
-              defaultValue={aiSettings.reviewBaseUrl ?? aiSettings.baseUrl}
-              placeholder="审稿 Base URL"
-              className={inputClassName}
-            />
-            <input name="reviewModel" defaultValue={aiSettings.reviewModel ?? aiSettings.model} placeholder="审稿模型名" className={inputClassName} />
-            <div className="settings-two-col">
-              <select name="reviewWireApi" defaultValue={aiSettings.reviewWireApi ?? aiSettings.wireApi ?? "responses"} className={inputClassName}>
-                <option value="responses">Responses API</option>
-                <option value="chat-completions">Chat Completions</option>
-              </select>
-              <select
-                name="reviewReasoningEffort"
-                defaultValue={aiSettings.reviewReasoningEffort ?? aiSettings.reasoningEffort ?? "xhigh"}
+            <label className="settings-field-block">
+              <span>审稿模型服务商</span>
+              <input
+                name="reviewModelProvider"
+                defaultValue={aiSettings.reviewModelProvider ?? aiSettings.modelProvider ?? "OpenAI"}
+                placeholder="审稿 Provider"
                 className={inputClassName}
-              >
-                <option value="none">none</option>
-                <option value="minimal">minimal</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-              </select>
+              />
+            </label>
+            <label className="settings-field-block">
+              <span>审稿模型 Base URL</span>
+              <input
+                name="reviewBaseUrl"
+                defaultValue={aiSettings.reviewBaseUrl ?? aiSettings.baseUrl}
+                placeholder="审稿 Base URL"
+                className={inputClassName}
+              />
+            </label>
+            <label className="settings-field-block">
+              <span>审稿模型名称</span>
+              <input name="reviewModel" defaultValue={aiSettings.reviewModel ?? aiSettings.model} placeholder="审稿模型名" className={inputClassName} />
+            </label>
+            <div className="settings-two-col">
+              <label className="settings-field-block">
+                <span>审稿调用格式</span>
+                <select name="reviewWireApi" defaultValue={aiSettings.reviewWireApi ?? aiSettings.wireApi ?? "responses"} className={inputClassName}>
+                  <option value="responses">Responses API</option>
+                  <option value="chat-completions">Chat Completions</option>
+                </select>
+              </label>
+              <label className="settings-field-block">
+                <span>审稿推理强度</span>
+                <select
+                  name="reviewReasoningEffort"
+                  defaultValue={aiSettings.reviewReasoningEffort ?? aiSettings.reasoningEffort ?? "xhigh"}
+                  className={inputClassName}
+                >
+                  <option value="none">none</option>
+                  <option value="minimal">minimal</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                </select>
+              </label>
             </div>
-            <input
-              name="reviewApiKey"
-              type="password"
-              defaultValue={aiSettings.reviewApiKey ?? aiSettings.apiKey}
-              placeholder="审稿 API Key"
-              className={inputClassName}
-            />
+            <label className="settings-field-block">
+              <span>审稿 API Key</span>
+              <input
+                name="reviewApiKey"
+                type="password"
+                defaultValue={aiSettings.reviewApiKey ?? aiSettings.apiKey}
+                placeholder="审稿 API Key"
+                className={inputClassName}
+              />
+            </label>
             <label className="settings-checkbox-line">
               <input name="disableResponseStorage" type="checkbox" defaultChecked={aiSettings.disableResponseStorage ?? true} />
               <span>禁用 Responses 存储</span>
@@ -215,20 +253,32 @@ export function SettingsPage({ initialAiSettings, initialImageSettings, initialW
 
         <SettingsCard icon={<ImageIcon className="h-5 w-5" />} title="图片模型配置">
           <form className="settings-form" onSubmit={handleSaveImageSettings}>
-            <input name="imageBaseUrl" defaultValue={imageSettings.baseUrl} placeholder="图片 Base URL" className={inputClassName} />
-            <input name="imageModel" defaultValue={imageSettings.model} placeholder="图片模型" className={inputClassName} />
-            <select name="imageSize" defaultValue={imageSettings.size} className={inputClassName}>
-              <option value="1536x1024">1536x1024</option>
-              <option value="1024x1024">1024x1024</option>
-              <option value="1024x1536">1024x1536</option>
-              <option value="auto">auto</option>
-            </select>
-            <input
-              name="imageApiKey"
-              type="password"
-              placeholder={imageSettings.hasApiKey ? "已保存图片 API Key" : "图片 API Key"}
-              className={inputClassName}
-            />
+            <label className="settings-field-block">
+              <span>图片模型 Base URL</span>
+              <input name="imageBaseUrl" defaultValue={imageSettings.baseUrl} placeholder="图片 Base URL" className={inputClassName} />
+            </label>
+            <label className="settings-field-block">
+              <span>图片模型名称</span>
+              <input name="imageModel" defaultValue={imageSettings.model} placeholder="图片模型" className={inputClassName} />
+            </label>
+            <label className="settings-field-block">
+              <span>默认图片尺寸</span>
+              <select name="imageSize" defaultValue={imageSettings.size} className={inputClassName}>
+                <option value="1536x1024">1536x1024</option>
+                <option value="1024x1024">1024x1024</option>
+                <option value="1024x1536">1024x1536</option>
+                <option value="auto">auto</option>
+              </select>
+            </label>
+            <label className="settings-field-block">
+              <span>图片 API Key</span>
+              <input
+                name="imageApiKey"
+                type="password"
+                placeholder={imageSettings.hasApiKey ? "已保存图片 API Key" : "图片 API Key"}
+                className={inputClassName}
+              />
+            </label>
             <button type="submit" className="settings-submit-button" disabled={busy === "image-settings"}>
               <Save className="h-5 w-5" />
               保存图片模型
@@ -238,19 +288,28 @@ export function SettingsPage({ initialAiSettings, initialImageSettings, initialW
 
         <SettingsCard icon={<Send className="h-5 w-5" />} title="微信后台">
           <form className="settings-form" onSubmit={handleSaveWeChat}>
-            <input name="appId" defaultValue={wechatConfig.appId} placeholder="AppID" className={inputClassName} />
-            <input
-              name="appSecret"
-              type="password"
-              placeholder={hasWeChatSecret(wechatConfig) ? "已保存 AppSecret" : "AppSecret"}
-              className={inputClassName}
-            />
-            <input
-              name="defaultThumbMediaId"
-              defaultValue={wechatConfig.defaultThumbMediaId ?? ""}
-              placeholder="封面素材 media_id"
-              className={inputClassName}
-            />
+            <label className="settings-field-block">
+              <span>公众号 AppID</span>
+              <input name="appId" defaultValue={wechatConfig.appId} placeholder="AppID" className={inputClassName} />
+            </label>
+            <label className="settings-field-block">
+              <span>公众号 AppSecret</span>
+              <input
+                name="appSecret"
+                type="password"
+                placeholder={hasWeChatSecret(wechatConfig) ? "已保存 AppSecret" : "AppSecret"}
+                className={inputClassName}
+              />
+            </label>
+            <label className="settings-field-block">
+              <span>默认封面 media_id</span>
+              <input
+                name="defaultThumbMediaId"
+                defaultValue={wechatConfig.defaultThumbMediaId ?? ""}
+                placeholder="封面素材 media_id"
+                className={inputClassName}
+              />
+            </label>
             <div className="settings-two-col">
               <button type="submit" className="settings-submit-button" disabled={busy === "wechat-settings"}>
                 <Save className="h-5 w-5" />

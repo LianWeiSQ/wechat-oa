@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Workbench } from "@/components/workbench";
 import { ANALYSIS_TEMPLATES } from "@/lib/analysis";
 import { THEME_COOKIE_NAME, THEME_STORAGE_KEY } from "@/lib/theme";
-import type { Article, WritingBlueprint, WritingStructureRun } from "@/lib/types";
+import type { Article, LocalDraft } from "@/lib/types";
 
 const articles: Article[] = [
   {
@@ -45,39 +45,53 @@ const articles: Article[] = [
   },
 ];
 
-const structureRun: WritingStructureRun = {
-  id: "wstruct_agent",
-  articleId: "art_agent",
-  structure: {
-    titlePattern: "问题场景 + 工程闭环判断",
-    openingHook: "从 Agent 项目上线后的成本失控切入",
-    pressurePoint: "只会调 API 的团队会卡在权限、评测和上下文成本",
-    ethicalRewrite: "不要制造淘汰焦虑，要给出工程补课路径",
-    technicalBackbone: ["工具权限", "状态管理", "评估闭环"],
-    evidencePattern: ["用失败模式说明问题", "用指标约束判断"],
-    pacingPattern: "场景开头后进入框架，再给项目建议",
-    reusableMoves: ["先给真实卡点", "把焦虑改写成行动清单"],
-    antiPatterns: ["再不学就淘汰", "加微信领取资料"],
-  },
-  qualityScore: 91,
-  modelMetadata: { provider: "openai-compatible", model: "gpt-5.4" },
-  createdAt: "2026-05-18T08:00:00.000Z",
+const wechatDraft: LocalDraft = {
+  id: "draft_wechat",
+  title: "OpenAI大神教你如何榨干Codex",
+  body: "<h1>OpenAI大神教你如何榨干Codex</h1><p>真正的差距不在会不会打开 Codex，而在你能不能把它变成稳定的工程工作流。</p>",
+  sourceAnalysisIds: [],
+  sourceArticleIds: ["art_agent"],
+  contentChannel: "wechat",
+  publishStatus: "draft",
+  plannedPublishAt: "",
+  publishedAt: "",
+  queueOrder: 0,
+  notes: "首篇公众号定调稿",
+  exportFormat: "html",
+  wechatDraftStatus: "not_sent",
+  createdAt: "2026-05-20T08:00:00.000Z",
+  updatedAt: "2026-05-20T08:00:00.000Z",
 };
 
-const writingBlueprint: WritingBlueprint = {
-  id: "wblue_agent",
-  name: "Agent 工程闭环蓝图",
-  sourceArticleIds: ["art_agent"],
-  summary: "从真实项目卡点进入，给工程框架和迁移建议。",
-  sectionPlan: [
-    { title: "真实场景", purpose: "开场", guidance: "用上线卡点进入" },
-    { title: "工程框架", purpose: "主体", guidance: "拆权限、状态、评估" },
-  ],
-  toneRules: ["克制", "给证据"],
-  bannedExpressions: ["加微信"],
-  modelMetadata: { provider: "openai-compatible", model: "gpt-5.4" },
-  createdAt: "2026-05-18T08:00:00.000Z",
-  updatedAt: "2026-05-18T08:00:00.000Z",
+const queuedWechatDraft: LocalDraft = {
+  ...wechatDraft,
+  id: "draft_wechat_queued",
+  title: "Codex 工作流排期稿",
+  body: "<p>排期稿正文。</p>",
+  publishStatus: "queued",
+  plannedPublishAt: "2026-05-29T01:30:00.000Z",
+  queueOrder: 1,
+  notes: "",
+};
+
+const publishedWechatDraft: LocalDraft = {
+  ...wechatDraft,
+  id: "draft_wechat_published",
+  title: "已经发布的公众号稿",
+  body: "<p>这篇已经发出，不应该留在待提交工作台。</p>",
+  publishStatus: "published",
+  publishedAt: "2026-05-21T08:00:00.000Z",
+  queueOrder: 3,
+};
+
+const xiaohongshuDraft: LocalDraft = {
+  ...wechatDraft,
+  id: "draft_xhs",
+  title: "小红书独立笔记",
+  body: "<p>这篇属于小红书，不应该出现在微信公众号工作台。</p>",
+  contentChannel: "xiaohongshu",
+  publishStatus: "draft",
+  queueOrder: 1,
 };
 
 async function openReaderActions() {
@@ -144,9 +158,9 @@ describe("Workbench", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "外部引用素材" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "公众号本地文章" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "小红书本地文章" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "素材库" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "公众号草稿" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "小红书草稿" })).toBeInTheDocument();
     expect(screen.getByText("2 篇外部引用素材 · 0 篇本地创作文章")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "打开配置中心" })).toHaveAttribute("href", "/settings");
     expect(screen.getByRole("main")).toHaveAttribute("data-theme", "light");
@@ -217,11 +231,14 @@ describe("Workbench", () => {
     expect(within(screen.getByRole("article")).queryByText("来源：LLM Lab")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "运行高级处理" })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "公众号本地文章" }));
+    await userEvent.click(screen.getByRole("button", { name: "公众号草稿" }));
 
-    expect(screen.getByRole("heading", { name: "本地公众号文章" })).toBeInTheDocument();
-    expect(screen.getByText("当前引用素材")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /生成专业长文/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "公众号草稿" })).toBeInTheDocument();
+    expect(screen.getByLabelText("微信公众号待提交草稿工作台")).toBeInTheDocument();
+    expect(screen.getByText("没有待提交草稿")).toBeInTheDocument();
+    expect(screen.getByText(/这里只显示待提交草稿/)).toBeInTheDocument();
+    expect(screen.queryByText("当前引用素材")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /生成专业长文/ })).not.toBeInTheDocument();
     expect(screen.queryByText("图片模型配置")).not.toBeInTheDocument();
     expect(screen.queryByText("微信后台")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "新增引用素材" })).not.toBeInTheDocument();
@@ -256,9 +273,9 @@ describe("Workbench", () => {
 
     expect(screen.queryByText("显示 2 / 2 篇")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "展开素材栏" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "从左侧展开素材栏" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "展开素材列表" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "从左侧展开素材栏" }));
+    await userEvent.click(screen.getByRole("button", { name: "展开素材列表" }));
     expect(screen.queryByRole("dialog", { name: "素材列表" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("搜索素材标题、来源、标签、正文")).toBeInTheDocument();
     expect(screen.getByText("显示 2 / 2 篇")).toBeInTheDocument();
@@ -800,34 +817,28 @@ describe("Workbench", () => {
     expect(within(importDialog).getByRole("button", { name: "手动粘贴" })).toBeInTheDocument();
   });
 
-  it("generates an original WeChat draft from a topic and selected references", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({
-        draft: {
-          id: "draft_original",
-          title: "想转 Agent 工程师，先补齐工程闭环",
-          body: "<h1>想转 Agent 工程师，先补齐工程闭环</h1><p>真正的差距在工程闭环。</p>",
-          sourceAnalysisIds: [],
-          exportFormat: "html",
-          wechatDraftStatus: "not_sent",
-          createdAt: "now",
-          updatedAt: "now",
-        },
-        warnings: [
-          {
-            sourceArticleId: "art_agent",
-            sourceTitle: "Agent 工程化成本拆解",
-            matchedText: "Agent 成本来自工具调用和上下文膨胀。",
+  it("shows only pending WeChat drafts and saves body edits from the workbench", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as Partial<LocalDraft>;
+      const draftId = url.split("/").pop();
+      const baseDraft = [wechatDraft, queuedWechatDraft, publishedWechatDraft, xiaohongshuDraft].find((draft) => draft.id === draftId) ?? wechatDraft;
+      return {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          draft: {
+            ...baseDraft,
+            ...payload,
+            updatedAt: "2026-05-27T09:00:00.000Z",
           },
-        ],
-      }),
+        }),
+      };
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(
       <Workbench
         initialArticles={articles}
+        initialDrafts={[publishedWechatDraft, xiaohongshuDraft, queuedWechatDraft, wechatDraft]}
         templates={ANALYSIS_TEMPLATES}
         initialAiSettings={{ baseUrl: "", apiKey: "", model: "" }}
         initialImageSettings={{
@@ -846,82 +857,65 @@ describe("Workbench", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "公众号本地文章" }));
-    expect(screen.getByRole("button", { name: "拆解当前素材结构" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "用所选素材生成结构蓝图" })).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("原创选题"), "想转 Agent 工程师，先补齐哪些工程能力？");
-    await userEvent.click(screen.getByRole("button", { name: "生成微信公众号原创稿" }));
+    await userEvent.click(screen.getByRole("button", { name: "公众号草稿" }));
+    const draftList = screen.getByLabelText("待提交草稿文件");
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/writing/drafts",
-      expect.objectContaining({
-        method: "POST",
-        body: expect.stringContaining("想转 Agent 工程师"),
-      }),
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/writing/drafts",
-      expect.objectContaining({
-        body: expect.stringContaining('"channel":"wechat"'),
-      }),
-    );
-    expect((await screen.findAllByText("想转 Agent 工程师，先补齐工程闭环")).length).toBeGreaterThan(0);
-    expect(screen.getByText("疑似长句复用，需要人工改写")).toBeInTheDocument();
+    expect(within(draftList).getByText(queuedWechatDraft.title)).toBeInTheDocument();
+    expect(within(draftList).getByText(wechatDraft.title)).toBeInTheDocument();
+    expect(within(draftList).getByLabelText("发布顺序 1")).toBeInTheDocument();
+    expect(within(draftList).getByLabelText("发布顺序 2")).toBeInTheDocument();
+    expect(within(draftList).queryByText("0")).not.toBeInTheDocument();
+    expect(within(draftList).queryByText(publishedWechatDraft.title)).not.toBeInTheDocument();
+    expect(within(draftList).queryByText(xiaohongshuDraft.title)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "生成微信公众号原创稿" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("写作蓝图预览")).not.toBeInTheDocument();
+
+    await userEvent.click(within(draftList).getByText(wechatDraft.title));
+    expect(screen.getByDisplayValue(wechatDraft.title)).toBeInTheDocument();
+    expect(screen.getAllByText("真正的差距不在会不会打开 Codex，而在你能不能把它变成稳定的工程工作流。").length).toBeGreaterThan(0);
+
+    await userEvent.clear(screen.getByLabelText("标题"));
+    await userEvent.type(screen.getByLabelText("标题"), "OpenAI大神教你如何榨干Codex：首篇改稿");
+    await userEvent.clear(screen.getByLabelText("正文"));
+    await userEvent.type(screen.getByLabelText("正文"), "<p>更适合首篇文章的新开头，正文可以在工作台直接改。</p>");
+    await userEvent.selectOptions(screen.getByLabelText("状态"), "queued");
+    fireEvent.change(screen.getByLabelText("计划发布时间"), { target: { value: "2026-06-01T09:30" } });
+    await userEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+
+    const [, saveInit] = fetchMock.mock.calls.find(([url]) => url === "/api/content/drafts/draft_wechat") ?? [];
+    const saveBody = JSON.parse(String((saveInit as RequestInit).body)) as Partial<LocalDraft>;
+    expect(saveBody).toMatchObject({
+      title: "OpenAI大神教你如何榨干Codex：首篇改稿",
+      body: "<p>更适合首篇文章的新开头，正文可以在工作台直接改。</p>",
+      publishStatus: "queued",
+      plannedPublishAt: "2026-06-01T09:30",
+    });
+    expect(await screen.findByText("草稿正文已保存")).toBeInTheDocument();
+    expect(screen.getAllByText("更适合首篇文章的新开头，正文可以在工作台直接改。").length).toBeGreaterThan(0);
   });
 
-  it("shows writing structure assets and the full WeChat agent pipeline", async () => {
-    render(
-      <Workbench
-        initialArticles={articles}
-        templates={ANALYSIS_TEMPLATES}
-        initialWritingBlueprints={[writingBlueprint]}
-        initialWritingStructureRuns={[structureRun]}
-        initialAiSettings={{ baseUrl: "", apiKey: "", model: "" }}
-        initialImageSettings={{
-          baseUrl: "https://api.openai.com/v1",
-          model: "gpt-image-2",
-          size: "1536x1024",
-          hasApiKey: false,
-        }}
-        initialWeChatConfig={{
-          appId: "",
-          appSecret: "",
-          tokenStatus: "unchecked",
-          lastCheckResult: "",
-          updatedAt: "",
-        }}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "公众号本地文章" }));
-
-    const pipeline = screen.getByLabelText("公众号 Agent 流程");
-    expect(within(pipeline).getByText("结构拆解 Agent")).toBeInTheDocument();
-    expect(within(pipeline).getByText("写作蓝图 Agent")).toBeInTheDocument();
-    expect(within(pipeline).getByText("原创写作 Agent")).toBeInTheDocument();
-    expect(within(pipeline).getByText("专业长文配图 Agent")).toBeInTheDocument();
-
-    const structurePanel = screen.getByLabelText("写作结构资产");
-    expect(within(structurePanel).getByText("问题场景 + 工程闭环判断")).toBeInTheDocument();
-    expect(within(structurePanel).getByText("工具权限")).toBeInTheDocument();
-    expect(within(structurePanel).getByText("把焦虑改写成行动清单")).toBeInTheDocument();
-    expect(within(structurePanel).getByText("再不学就淘汰")).toBeInTheDocument();
-
-    const blueprintPreview = screen.getByLabelText("写作蓝图预览");
-    expect(within(blueprintPreview).getByText("Agent 工程闭环蓝图")).toBeInTheDocument();
-    expect(within(blueprintPreview).getByText("真实场景")).toBeInTheDocument();
-  });
-
-  it("renders a newly generated structure run immediately in the WeChat workspace", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ structureRun }),
+  it("removes a WeChat draft from the pending list after marking it published", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as Partial<LocalDraft>;
+      const draftId = url.split("/").pop();
+      const baseDraft = [wechatDraft, queuedWechatDraft].find((draft) => draft.id === draftId) ?? wechatDraft;
+      return {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          draft: {
+            ...baseDraft,
+            ...payload,
+            updatedAt: "2026-05-27T09:30:00.000Z",
+          },
+        }),
+      };
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(
       <Workbench
         initialArticles={articles}
+        initialDrafts={[queuedWechatDraft, wechatDraft]}
         templates={ANALYSIS_TEMPLATES}
         initialAiSettings={{ baseUrl: "", apiKey: "", model: "" }}
         initialImageSettings={{
@@ -940,12 +934,20 @@ describe("Workbench", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "公众号本地文章" }));
-    await userEvent.click(screen.getByRole("button", { name: "拆解当前素材结构" }));
+    await userEvent.click(screen.getByRole("button", { name: "公众号草稿" }));
+    const draftList = screen.getByLabelText("待提交草稿文件");
+    await userEvent.click(within(draftList).getByText(wechatDraft.title));
+    await userEvent.click(screen.getByRole("button", { name: "标为已发布" }));
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/library/articles/art_agent/structure", { method: "POST" });
-    await screen.findAllByText("问题场景 + 工程闭环判断");
-    expect(within(screen.getByLabelText("写作结构资产")).getByText("问题场景 + 工程闭环判断")).toBeInTheDocument();
-    expect(screen.getByText("写作结构已拆解，已生成可复用结构资产")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/content/drafts/draft_wechat",
+      expect.objectContaining({
+        method: "PATCH",
+        body: expect.stringContaining('"publishStatus":"published"'),
+      }),
+    );
+    expect(await screen.findByText(`已标记发布：${wechatDraft.title}`)).toBeInTheDocument();
+    expect(within(draftList).queryByText(wechatDraft.title)).not.toBeInTheDocument();
+    expect(within(draftList).getByText(queuedWechatDraft.title)).toBeInTheDocument();
   });
 });

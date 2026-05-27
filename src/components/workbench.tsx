@@ -6,6 +6,8 @@ import {
   Brain,
   CheckCircle2,
   Database,
+  ChevronDown,
+  ChevronUp,
   FileText,
   MoreHorizontal,
   Moon,
@@ -41,12 +43,8 @@ import type {
   ArticleParseRun,
   ContentChannel,
   ContentAgentRun,
-  DraftImageAsset,
   LocalDraft,
   PublishStatus,
-  SourceReuseWarning,
-  WritingBlueprint,
-  WritingStructureRun,
 } from "@/lib/types";
 import type { ThemeMode } from "@/lib/theme";
 
@@ -57,8 +55,6 @@ type WorkbenchProps = {
   initialAiSettings?: unknown;
   initialImageSettings?: unknown;
   initialWeChatConfig?: unknown;
-  initialWritingBlueprints?: WritingBlueprint[];
-  initialWritingStructureRuns?: WritingStructureRun[];
   initialThemeMode?: ThemeMode;
 };
 
@@ -99,8 +95,6 @@ export function Workbench({
   initialArticles,
   initialDrafts = [],
   templates,
-  initialWritingBlueprints = [],
-  initialWritingStructureRuns = [],
   initialThemeMode = DEFAULT_THEME_MODE,
 }: WorkbenchProps) {
   const [articles, setArticles] = useState(initialArticles);
@@ -127,14 +121,6 @@ export function Workbench({
   const [editDraft, setEditDraft] = useState({ title: "", category: "", sourceProject: "", content: "" });
   const editorRef = useRef<HTMLDivElement | null>(null);
   const [importFeedback, setImportFeedback] = useState<Notice | null>(null);
-  const [writingBlueprints, setWritingBlueprints] = useState(initialWritingBlueprints);
-  const [selectedBlueprintId, setSelectedBlueprintId] = useState(initialWritingBlueprints[0]?.id ?? "");
-  const [writingTopic, setWritingTopic] = useState("");
-  const [referenceArticleIds, setReferenceArticleIds] = useState<string[]>(initialArticles[0] ? [initialArticles[0].id] : []);
-  const [structureRuns, setStructureRuns] = useState<WritingStructureRun[]>(initialWritingStructureRuns);
-  const [sourceReuseWarnings, setSourceReuseWarnings] = useState<SourceReuseWarning[]>([]);
-  const [latestDraft, setLatestDraft] = useState<LocalDraft | null>(null);
-  const [draftImageAssets, setDraftImageAssets] = useState<DraftImageAsset[]>([]);
   const initialSelectedDraft = firstPendingDraftForChannel(initialDrafts, "wechat");
   const [selectedDraftId, setSelectedDraftId] = useState(initialSelectedDraft?.id ?? "");
   const [draftEditor, setDraftEditor] = useState<DraftEditorState>(() => draftToEditorState(initialSelectedDraft));
@@ -240,30 +226,6 @@ export function Workbench({
   const selectedAgentRuns = useMemo(
     () => agentRuns.filter((run) => run.articleId === visibleSelectedId),
     [agentRuns, visibleSelectedId],
-  );
-
-  const referenceArticleSet = useMemo(() => new Set(referenceArticleIds), [referenceArticleIds]);
-
-  const selectedReferenceArticles = useMemo(
-    () => articles.filter((article) => referenceArticleSet.has(article.id)),
-    [articles, referenceArticleSet],
-  );
-
-  const selectedStructureRuns = useMemo(
-    () => structureRuns.filter((run) => run.articleId === visibleSelectedId),
-    [structureRuns, visibleSelectedId],
-  );
-
-  const selectedStructureRun = selectedStructureRuns[0] ?? null;
-
-  const referenceStructureRuns = useMemo(
-    () => structureRuns.filter((run) => referenceArticleSet.has(run.articleId)),
-    [referenceArticleSet, structureRuns],
-  );
-
-  const selectedBlueprint = useMemo(
-    () => writingBlueprints.find((blueprint) => blueprint.id === selectedBlueprintId) ?? null,
-    [selectedBlueprintId, writingBlueprints],
   );
 
   const activeContentChannel = activeWorkspace === "xiaohongshu" ? "xiaohongshu" : "wechat";
@@ -564,7 +526,6 @@ export function Workbench({
       });
       setAnalysisRuns((current) => current.filter((run) => run.articleId !== article.id));
       setAgentRuns((current) => current.filter((run) => run.articleId !== article.id));
-      setStructureRuns((current) => current.filter((run) => run.articleId !== article.id));
       setPendingDeleteId(null);
       setNotice({ type: "ok", text: `已删除引用素材：${article.title}` });
     } catch (error) {
@@ -633,135 +594,6 @@ export function Workbench({
     });
   }
 
-  function toggleReferenceArticle(articleId: string) {
-    setReferenceArticleIds((current) =>
-      current.includes(articleId) ? current.filter((id) => id !== articleId) : [...current, articleId],
-    );
-  }
-
-  function applyStructureRuns(nextRuns: WritingStructureRun[]) {
-    if (nextRuns.length === 0) {
-      return;
-    }
-    setStructureRuns((current) => upsertStructureRuns(current, nextRuns));
-  }
-
-  async function handleWritingStructure() {
-    if (!selectedArticle) {
-      return;
-    }
-    setBusy("writing-structure");
-    setNotice({ type: "info", text: "正在拆解当前素材的写作结构" });
-    const response = await fetch(`/api/library/articles/${selectedArticle.id}/structure`, {
-      method: "POST",
-    });
-    const data = await response.json();
-    setBusy(null);
-    if (!response.ok) {
-      setNotice({ type: "error", text: data.error ?? "写作结构拆解失败" });
-      return;
-    }
-    applyStructureRuns([data.structureRun]);
-    if (!referenceArticleIds.includes(selectedArticle.id)) {
-      setReferenceArticleIds((current) => [...current, selectedArticle.id]);
-    }
-    setNotice({ type: "ok", text: "写作结构已拆解，已生成可复用结构资产" });
-  }
-
-  async function handleWritingBlueprint() {
-    if (referenceArticleIds.length === 0) {
-      setNotice({ type: "error", text: "请至少选择一篇参考素材" });
-      return;
-    }
-    setBusy("writing-blueprint");
-    setNotice({ type: "info", text: "正在聚合参考素材的写作结构蓝图" });
-    const response = await fetch("/api/writing/blueprints", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ articleIds: referenceArticleIds }),
-    });
-    const data = await response.json();
-    setBusy(null);
-    if (!response.ok) {
-      setNotice({ type: "error", text: data.error ?? "写作蓝图生成失败" });
-      return;
-    }
-    setWritingBlueprints((current) => [data.blueprint, ...current.filter((blueprint) => blueprint.id !== data.blueprint.id)]);
-    setSelectedBlueprintId(data.blueprint.id);
-    applyStructureRuns(data.structureRuns ?? []);
-    setNotice({ type: "ok", text: "写作蓝图已生成" });
-  }
-
-  async function handleOriginalDraft(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (referenceArticleIds.length === 0) {
-      setNotice({ type: "error", text: "请至少选择一篇参考素材" });
-      return;
-    }
-    setBusy("writing-draft");
-    setNotice({ type: "info", text: "正在根据选题生成本地创作文章" });
-    const response = await fetch("/api/writing/drafts", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        topic: writingTopic,
-        referenceArticleIds,
-        blueprintId: selectedBlueprintId || undefined,
-        channel: activeContentChannel,
-      }),
-    });
-    const data = await response.json();
-    setBusy(null);
-    if (!response.ok) {
-      setNotice({ type: "error", text: data.error ?? "原创文章生成失败" });
-      return;
-    }
-    setLatestDraft(data.draft);
-    setLocalDrafts((current) => upsertDraft(current, data.draft));
-    if (draftChannel(data.draft) === activeContentChannel) {
-      selectDraftForEditing(data.draft);
-    }
-    applyStructureRuns(data.structureRuns ?? []);
-    setDraftImageAssets([]);
-    setSourceReuseWarnings(data.warnings ?? []);
-    const reviewScore = typeof data.review?.score === "number" ? `，审稿 ${data.review.score} 分` : "";
-    setNotice({
-      type: (data.warnings ?? []).length > 0 ? "info" : "ok",
-      text: (data.warnings ?? []).length > 0 ? `原创文章已生成${reviewScore}，但发现疑似长句复用` : `原创文章草稿已生成${reviewScore}`,
-    });
-  }
-
-  async function handleProfessionalDraft() {
-    if (!selectedArticle) {
-      return;
-    }
-    setBusy("professional-draft");
-    setNotice({ type: "info", text: "正在生成专业长文和配图" });
-    const response = await fetch(`/api/wechat/articles/${selectedArticle.id}/professional-draft`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ analysisRunId: selectedAnalysisRuns[0]?.id }),
-    });
-    const data = await response.json();
-    setBusy(null);
-    if (!response.ok) {
-      setNotice({ type: "error", text: data.error ?? "专业长文生成失败" });
-      return;
-    }
-    setLatestDraft(data.draft);
-    setLocalDrafts((current) => upsertDraft(current, data.draft));
-    if (draftChannel(data.draft) === activeContentChannel) {
-      selectDraftForEditing(data.draft);
-    }
-    setDraftImageAssets(data.imageAssets ?? []);
-    setSourceReuseWarnings([]);
-    const failedCount = (data.imageAssets ?? []).filter((asset: DraftImageAsset) => asset.status === "failed").length;
-    setNotice({
-      type: failedCount > 0 ? "info" : "ok",
-      text: failedCount > 0 ? `专业长文已生成，${failedCount} 张配图待处理` : "专业长文和配图已生成",
-    });
-  }
-
   async function patchLocalDraft(draftId: string, payload: Partial<LocalDraft>): Promise<LocalDraft> {
     const response = await fetch(`/api/content/drafts/${draftId}`, {
       method: "PATCH",
@@ -818,8 +650,8 @@ export function Workbench({
     }
     setBusy(`draft-order-${draft.id}`);
     try {
-      const draftOrder = draft.queueOrder ?? index + 1;
-      const neighborOrder = neighbor.queueOrder ?? index + direction + 1;
+      const draftOrder = effectiveDraftOrder(draft, index);
+      const neighborOrder = effectiveDraftOrder(neighbor, index + direction);
       await Promise.all([
         patchLocalDraft(draft.id, { queueOrder: neighborOrder }),
         patchLocalDraft(neighbor.id, { queueOrder: draftOrder }),
@@ -888,7 +720,7 @@ export function Workbench({
   }
 
   const workspaceKicker =
-    activeWorkspace === "library" ? "外部引用素材" : localArticleCollectionLabel(activeContentChannel);
+    activeWorkspace === "library" ? "引用素材库" : localArticleCollectionLabel(activeContentChannel);
   const nextThemeMode = themeMode === "dark" ? "light" : "dark";
   const isLibraryEmptyState = activeWorkspace === "library" && !selectedArticle;
 
@@ -939,7 +771,7 @@ export function Workbench({
               }}
               className={workspaceButtonClassName(activeWorkspace === "library")}
             >
-              外部引用素材
+              素材库
             </button>
             <button
               type="button"
@@ -948,7 +780,7 @@ export function Workbench({
               }}
               className={workspaceButtonClassName(activeWorkspace === "wechat")}
             >
-              公众号本地文章
+              公众号草稿
             </button>
             <button
               type="button"
@@ -957,7 +789,7 @@ export function Workbench({
               }}
               className={workspaceButtonClassName(activeWorkspace === "xiaohongshu")}
             >
-              小红书本地文章
+              小红书草稿
             </button>
           </nav>
           <button
@@ -1000,12 +832,12 @@ export function Workbench({
           <button
             type="button"
             className="library-rail-handle"
-            aria-label="从左侧展开素材栏"
+            aria-label="展开素材列表"
             aria-expanded={libraryRailOpen}
             onClick={() => setLibraryRailOpen(true)}
           >
             <PanelLeftOpen className="h-4 w-4" />
-            素材列表
+            <span>素材列表</span>
           </button>
         ) : null}
 
@@ -1198,136 +1030,6 @@ export function Workbench({
           <div className={isContentWorkspace ? "wechat-layout" : "reader-layout reader-layout-reading"}>
             {isContentWorkspace ? (
               <section className="wechat-workspace" aria-label={`${localArticleCollectionLabel(activeContentChannel)}工作台`}>
-                {activeWorkspace === "wechat" ? (
-                  <div className="panel wechat-generate-panel">
-                    <div className="panel-title">
-                      <FileText className="h-4 w-4 text-[var(--red)]" />
-                      公众号生成
-                    </div>
-                    <div className="wechat-source-card">
-                      <div className="kicker">当前引用素材</div>
-                      <div className="wechat-source-title">{selectedArticle?.title ?? "先在左侧选择一篇素材"}</div>
-                      {selectedArticle ? (
-                        <div className="tiny-meta">
-                          {selectedArticle.sourceName} · {articleCategory(selectedArticle)}
-                        </div>
-                      ) : (
-                        <p className="panel-copy">外部引用素材只作为生成参考，这里不展示素材阅读页。</p>
-                      )}
-                    </div>
-                    <WeChatAgentOverview
-                      draftImageAssets={draftImageAssets}
-                      latestDraft={latestDraft}
-                      referenceCount={selectedReferenceArticles.length}
-                      selectedArticle={selectedArticle}
-                      selectedBlueprint={selectedBlueprint}
-                      selectedStructureRun={selectedStructureRun}
-                      structureAssetCount={referenceStructureRuns.length}
-                    />
-                    <WritingStructureAssetPanel
-                      busy={busy}
-                      isReference={Boolean(selectedArticle && referenceArticleSet.has(selectedArticle.id))}
-                      onAnalyze={handleWritingStructure}
-                      onReferenceToggle={() => selectedArticle && toggleReferenceArticle(selectedArticle.id)}
-                      selectedArticle={selectedArticle}
-                      structureRun={selectedStructureRun}
-                    />
-                    <form className="wechat-writing-form" onSubmit={handleOriginalDraft}>
-                      <label className="field-label" htmlFor="writing-topic">
-                        原创选题
-                      </label>
-                      <input
-                        id="writing-topic"
-                        className="field"
-                        value={writingTopic}
-                        onChange={(event) => setWritingTopic(event.target.value)}
-                        placeholder="例如：想转 Agent 工程师，先补齐哪些工程能力？"
-                      />
-                      <label className="field-label" htmlFor="writing-blueprint">
-                        写作蓝图
-                      </label>
-                      <select
-                        id="writing-blueprint"
-                        className="field"
-                        value={selectedBlueprintId}
-                        onChange={(event) => setSelectedBlueprintId(event.target.value)}
-                      >
-                        <option value="">默认结构</option>
-                        {writingBlueprints.map((blueprint) => (
-                          <option key={blueprint.id} value={blueprint.id}>
-                            {blueprint.name}
-                          </option>
-                        ))}
-                      </select>
-                      <WritingBlueprintPreview
-                        blueprint={selectedBlueprint}
-                        referenceCount={selectedReferenceArticles.length}
-                        structureAssetCount={referenceStructureRuns.length}
-                        onGenerate={handleWritingBlueprint}
-                        busy={busy}
-                      />
-                      <div className="metric-line">
-                        <span className="field-label">参考素材</span>
-                        <span className="tiny-meta">
-                          已选 {selectedReferenceArticles.length} 篇 · 可用结构资产 {referenceStructureRuns.length} 条
-                        </span>
-                      </div>
-                      <div className="wechat-reference-list" aria-label="参考素材">
-                        {articles.map((article) => (
-                          <label key={article.id} className="wechat-reference-option">
-                            <input
-                              type="checkbox"
-                              checked={referenceArticleSet.has(article.id)}
-                              onChange={() => toggleReferenceArticle(article.id)}
-                            />
-                            <span>{article.title}</span>
-                          </label>
-                        ))}
-                      </div>
-                      <button
-                        type="submit"
-                        disabled={busy === "writing-draft" || referenceArticleIds.length === 0 || !writingTopic.trim()}
-                        className="btn btn-primary"
-                      >
-                        {busy === "writing-draft" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                        生成微信公众号原创稿
-                      </button>
-                    </form>
-                    <button
-                      type="button"
-                      disabled={!selectedArticle || busy === "professional-draft"}
-                      onClick={handleProfessionalDraft}
-                      className="btn btn-redline wechat-generate-button"
-                    >
-                      {busy === "professional-draft" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-                      生成专业长文 + 配图
-                    </button>
-                    <section className="panel">
-                      <div className="panel-title">
-                        <FileText className="h-4 w-4 text-[var(--green)]" />
-                        最新草稿
-                      </div>
-                      {latestDraft ? (
-                        <div className="draft-card">
-                          <div className="draft-title">{latestDraft.title}</div>
-                          <p className="wechat-draft-preview">{stripPreviewHtml(latestDraft.body).slice(0, 220)}</p>
-                          {sourceReuseWarnings.length > 0 ? (
-                            <div className="mt-3 warning-list">
-                              <div className="tiny-meta text-[var(--amber)]">疑似长句复用，需要人工改写</div>
-                              {sourceReuseWarnings.map((warning) => (
-                                <p key={`${warning.sourceArticleId}-${warning.matchedText}`} className="tiny-meta">
-                                  {warning.sourceTitle}：{warning.matchedText.slice(0, 80)}
-                                </p>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <p className="panel-copy">生成后会在这里看到公众号草稿。</p>
-                      )}
-                    </section>
-                  </div>
-                ) : null}
                 <ContentDraftWorkbench
                   busy={busy}
                   channel={activeContentChannel}
@@ -1709,7 +1411,7 @@ function ContentDraftWorkbench({
   stats: Record<PublishStatus, number>;
 }) {
   const label = channelLabel(channel);
-  const selectedStatus = selectedDraft ? draftStatus(selectedDraft) : "draft";
+  const selectedStatus = draftEditor.publishStatus;
 
   return (
     <section className="panel content-draft-workbench" aria-label={`${label}待提交草稿工作台`}>
@@ -1734,22 +1436,31 @@ function ContentDraftWorkbench({
           {drafts.map((draft, index) => (
             <article key={draft.id} className={`content-draft-item ${selectedDraft?.id === draft.id ? "content-draft-item-active" : ""}`}>
               <div className="content-order-controls" aria-label="调整发布顺序">
-                <button type="button" className="content-order-button" disabled={index === 0 || busy === `draft-order-${draft.id}`} onClick={() => void onMove(draft, -1)}>
-                  ↑
-                </button>
-                <span>{draft.queueOrder ?? index + 1}</span>
                 <button
                   type="button"
                   className="content-order-button"
+                  aria-label={`上移：${draft.title}`}
+                  title="上移"
+                  disabled={index === 0 || busy === `draft-order-${draft.id}`}
+                  onClick={() => void onMove(draft, -1)}
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                </button>
+                <span aria-label={`发布顺序 ${displayDraftOrder(draft, index)}`}>{displayDraftOrder(draft, index)}</span>
+                <button
+                  type="button"
+                  className="content-order-button"
+                  aria-label={`下移：${draft.title}`}
+                  title="下移"
                   disabled={index === drafts.length - 1 || busy === `draft-order-${draft.id}`}
                   onClick={() => void onMove(draft, 1)}
                 >
-                  ↓
+                  <ChevronDown className="h-3.5 w-3.5" />
                 </button>
               </div>
               <button type="button" className="content-draft-item-main" aria-pressed={selectedDraft?.id === draft.id} onClick={() => onSelect(draft.id)}>
                 <span className="content-queue-title">{draft.title}</span>
-                <span className="content-queue-preview">{stripPreviewHtml(draft.body).slice(0, 160) || "暂无正文"}</span>
+                <span className="content-queue-preview">{draftPreviewText(draft).slice(0, 160) || "暂无正文"}</span>
                 <span className="content-queue-meta">
                   <span>{publishStatusLabel(draftStatus(draft))}</span>
                   <span>{draft.plannedPublishAt ? `计划 ${formatDateTime(draft.plannedPublishAt)}` : "未排期"}</span>
@@ -1860,221 +1571,6 @@ function ContentDraftWorkbench({
           )}
         </div>
       </div>
-    </section>
-  );
-}
-
-function WeChatAgentOverview({
-  draftImageAssets,
-  latestDraft,
-  referenceCount,
-  selectedArticle,
-  selectedBlueprint,
-  selectedStructureRun,
-  structureAssetCount,
-}: {
-  draftImageAssets: DraftImageAsset[];
-  latestDraft: LocalDraft | null;
-  referenceCount: number;
-  selectedArticle: Article | null;
-  selectedBlueprint: WritingBlueprint | null;
-  selectedStructureRun: WritingStructureRun | null;
-  structureAssetCount: number;
-}) {
-  const generatedImageCount = draftImageAssets.filter((asset) => asset.status === "generated").length;
-  const failedImageCount = draftImageAssets.filter((asset) => asset.status === "failed").length;
-
-  return (
-    <section className="wechat-agent-overview" aria-label="公众号 Agent 流程">
-      <div className="wechat-section-heading">
-        <div>
-          <div className="kicker">AGENT PIPELINE</div>
-          <h2>公众号 Agent 工作流</h2>
-        </div>
-        <span className="tiny-meta">素材 → 结构 → 蓝图 → 草稿 → 配图</span>
-      </div>
-      <div className="wechat-agent-grid">
-        <AgentStatusCard
-          icon={<Scissors className="h-4 w-4" />}
-          name="结构拆解 Agent"
-          status={selectedStructureRun ? `已拆解 · ${selectedStructureRun.qualityScore} 分` : selectedArticle ? "待拆解" : "先选素材"}
-          copy={selectedStructureRun?.structure.titlePattern || "提取标题套路、开头钩子、技术骨架和不要学的表达。"}
-          tone={selectedStructureRun ? "ready" : "idle"}
-        />
-        <AgentStatusCard
-          icon={<Brain className="h-4 w-4" />}
-          name="写作蓝图 Agent"
-          status={selectedBlueprint ? "蓝图已选" : referenceCount > 0 ? "可生成蓝图" : "先选参考"}
-          copy={selectedBlueprint?.name || `${referenceCount} 篇参考，${structureAssetCount} 条结构资产可用。`}
-          tone={selectedBlueprint ? "ready" : "idle"}
-        />
-        <AgentStatusCard
-          icon={<Sparkles className="h-4 w-4" />}
-          name="原创写作 Agent"
-          status={latestDraft && draftImageAssets.length === 0 ? "已有原创草稿" : "等待选题"}
-          copy={latestDraft?.title || "根据选题和参考结构写原创草稿，并检查长句复用。"}
-          tone={latestDraft && draftImageAssets.length === 0 ? "ready" : "idle"}
-        />
-        <AgentStatusCard
-          icon={<Upload className="h-4 w-4" />}
-          name="专业长文配图 Agent"
-          status={draftImageAssets.length > 0 ? `${generatedImageCount} 张成功 · ${failedImageCount} 张待处理` : "可一键生成"}
-          copy="基于当前素材生成专业长文、封面图和解释图。"
-          tone={draftImageAssets.length > 0 ? "ready" : "idle"}
-        />
-      </div>
-    </section>
-  );
-}
-
-function AgentStatusCard({
-  copy,
-  icon,
-  name,
-  status,
-  tone,
-}: {
-  copy: string;
-  icon: ReactNode;
-  name: string;
-  status: string;
-  tone: "ready" | "idle";
-}) {
-  return (
-    <div className="agent-status-card">
-      <div className="agent-status-card-top">
-        <span className="agent-status-icon">{icon}</span>
-        <span className={tone === "ready" ? "agent-status-pill agent-status-pill-ready" : "agent-status-pill"}>{status}</span>
-      </div>
-      <div className="agent-status-name">{name}</div>
-      <p>{copy}</p>
-    </div>
-  );
-}
-
-function WritingStructureAssetPanel({
-  busy,
-  isReference,
-  onAnalyze,
-  onReferenceToggle,
-  selectedArticle,
-  structureRun,
-}: {
-  busy: string | null;
-  isReference: boolean;
-  onAnalyze: () => void;
-  onReferenceToggle: () => void;
-  selectedArticle: Article | null;
-  structureRun: WritingStructureRun | null;
-}) {
-  const structure = structureRun?.structure;
-
-  return (
-    <section className="writing-asset-panel" aria-label="写作结构资产">
-      <div className="wechat-section-heading">
-        <div>
-          <div className="kicker">STRUCTURE ASSET</div>
-          <h2>拆解结果</h2>
-        </div>
-        <span className={structureRun ? "score" : "tiny-meta"}>{structureRun ? `${structureRun.qualityScore} 分` : "未生成"}</span>
-      </div>
-
-      {structure ? (
-        <div className="structure-asset-grid">
-          <StructureField label="标题套路" value={structure.titlePattern} />
-          <StructureField label="开头钩子" value={structure.openingHook} />
-          <StructureField label="问题压力" value={structure.pressurePoint} />
-          <StructureField label="克制改写" value={structure.ethicalRewrite} />
-          <StructureList label="技术骨架" values={structure.technicalBackbone} />
-          <StructureList label="证据方式" values={structure.evidencePattern} />
-          <StructureField label="段落节奏" value={structure.pacingPattern} />
-          <StructureList label="可复用写法" values={structure.reusableMoves} />
-          <StructureList label="不要学" values={structure.antiPatterns} warning />
-        </div>
-      ) : (
-        <div className="structure-empty-state">
-          <p className="panel-copy">
-            点“拆解当前素材结构”后，会在这里看到标题套路、开头钩子、技术骨架、可复用写法和不要学的表达。
-          </p>
-        </div>
-      )}
-
-      <div className="wechat-action-row">
-        <button type="button" disabled={!selectedArticle || busy === "writing-structure"} onClick={onAnalyze} className="btn btn-secondary">
-          {busy === "writing-structure" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
-          {structureRun ? "重新拆解当前素材结构" : "拆解当前素材结构"}
-        </button>
-        <button type="button" disabled={!selectedArticle} onClick={onReferenceToggle} className="btn btn-secondary">
-          <CheckCircle2 className="h-4 w-4" />
-          {isReference ? "移出参考素材" : "加入参考素材"}
-        </button>
-      </div>
-      {structureRun ? <p className="tiny-meta">最近拆解：{formatStructureRunDate(structureRun)}</p> : null}
-    </section>
-  );
-}
-
-function StructureField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="structure-field">
-      <span>{label}</span>
-      <p>{value || "未提取"}</p>
-    </div>
-  );
-}
-
-function StructureList({ label, values, warning = false }: { label: string; values: string[]; warning?: boolean }) {
-  const items = values.length > 0 ? values : ["未提取"];
-  return (
-    <div className={warning ? "structure-field structure-field-warning" : "structure-field"}>
-      <span>{label}</span>
-      <ul>
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function WritingBlueprintPreview({
-  blueprint,
-  busy,
-  onGenerate,
-  referenceCount,
-  structureAssetCount,
-}: {
-  blueprint: WritingBlueprint | null;
-  busy: string | null;
-  onGenerate: () => void;
-  referenceCount: number;
-  structureAssetCount: number;
-}) {
-  return (
-    <section className="blueprint-preview" aria-label="写作蓝图预览">
-      <div className="metric-line">
-        <span className="field-label">蓝图状态</span>
-        <span className="tiny-meta">
-          {referenceCount} 篇参考 · {structureAssetCount} 条结构资产
-        </span>
-      </div>
-      {blueprint ? (
-        <div className="blueprint-card">
-          <div className="draft-title">{blueprint.name}</div>
-          <p className="panel-copy">{blueprint.summary || "已生成可复用写作蓝图。"}</p>
-          <div className="blueprint-section-list">
-            {blueprint.sectionPlan.slice(0, 4).map((section) => (
-              <span key={`${blueprint.id}-${section.title}`}>{section.title}</span>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <p className="panel-copy">没有选择蓝图时会使用默认结构；也可以先用参考素材生成专属蓝图。</p>
-      )}
-      <button type="button" disabled={referenceCount === 0 || busy === "writing-blueprint"} onClick={onGenerate} className="btn btn-secondary">
-        {busy === "writing-blueprint" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
-        用所选素材生成结构蓝图
-      </button>
     </section>
   );
 }
@@ -2588,7 +2084,7 @@ function channelPageTitle(channel: ContentChannel): string {
 }
 
 function localArticleCollectionLabel(channel: ContentChannel): string {
-  return channel === "xiaohongshu" ? "本地小红书文章" : "本地公众号文章";
+  return channel === "xiaohongshu" ? "小红书草稿" : "公众号草稿";
 }
 
 function publishStatusLabel(status: PublishStatus): string {
@@ -2626,9 +2122,30 @@ function compareDraftQueue(left: LocalDraft, right: LocalDraft): number {
   };
   return (
     statusOrder[draftStatus(left)] - statusOrder[draftStatus(right)] ||
-    (left.queueOrder ?? 0) - (right.queueOrder ?? 0) ||
+    sortableDraftOrder(left) - sortableDraftOrder(right) ||
     compareDateDesc(left.updatedAt, right.updatedAt)
   );
+}
+
+function effectiveDraftOrder(draft: LocalDraft, index: number): number {
+  return typeof draft.queueOrder === "number" && Number.isFinite(draft.queueOrder) && draft.queueOrder > 0 ? draft.queueOrder : index + 1;
+}
+
+function displayDraftOrder(draft: LocalDraft, index: number): number {
+  return effectiveDraftOrder(draft, index);
+}
+
+function sortableDraftOrder(draft: LocalDraft): number {
+  return typeof draft.queueOrder === "number" && Number.isFinite(draft.queueOrder) && draft.queueOrder > 0 ? draft.queueOrder : Number.MAX_SAFE_INTEGER;
+}
+
+function draftPreviewText(draft: LocalDraft): string {
+  const preview = stripPreviewHtml(draft.body);
+  const title = draft.title.trim();
+  if (!title || !preview.startsWith(title)) {
+    return preview;
+  }
+  return preview.slice(title.length).replace(/^[\s:：｜|,，。-]+/, "").trim() || preview;
 }
 
 function toDateTimeLocalValue(value: string | undefined): string {
@@ -2655,10 +2172,6 @@ function formatDateTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function formatStructureRunDate(run: WritingStructureRun): string {
-  return run.createdAt.slice(0, 10) || "刚刚";
 }
 
 function stripPreviewHtml(value: string): string {
@@ -2739,14 +2252,6 @@ function upsertDraft(current: LocalDraft[], draft: LocalDraft): LocalDraft[] {
   const existing = current.some((item) => item.id === draft.id);
   const next = existing ? current.map((item) => (item.id === draft.id ? draft : item)) : [draft, ...current];
   return next.sort(compareDraftQueue);
-}
-
-function upsertStructureRuns(current: WritingStructureRun[], runs: WritingStructureRun[]): WritingStructureRun[] {
-  const byId = new Map(current.map((run) => [run.id, run]));
-  for (const run of runs) {
-    byId.set(run.id, run);
-  }
-  return Array.from(byId.values()).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 function sourceTypeLabel(sourceType: Article["sourceType"]): string {

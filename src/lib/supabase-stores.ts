@@ -1377,7 +1377,7 @@ function normalizeIds(values: string[]): string[] {
 
 function normalizeQueueOrder(value: unknown, fallback: number): number {
   const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 0 ? Math.trunc(numeric) : fallback;
+  return Number.isFinite(numeric) && numeric > 0 ? Math.trunc(numeric) : fallback;
 }
 
 function normalizeOptionalIso(value: unknown): string {

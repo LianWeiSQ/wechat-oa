@@ -296,6 +296,33 @@ export function migrate(db: DatabaseSync): void {
     SET publish_status = 'published'
     WHERE publish_status = 'draft' AND wechat_draft_status = 'sent';
   `);
+  db.exec(`
+    WITH ranked_drafts AS (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (
+          PARTITION BY content_channel
+          ORDER BY
+            CASE publish_status
+              WHEN 'queued' THEN 0
+              WHEN 'draft' THEN 1
+              WHEN 'published' THEN 2
+              ELSE 3
+            END,
+            CASE WHEN queue_order > 0 THEN queue_order ELSE 2147483647 END,
+            updated_at DESC,
+            id ASC
+        ) AS normalized_order
+      FROM drafts
+    )
+    UPDATE drafts
+    SET queue_order = (
+      SELECT normalized_order
+      FROM ranked_drafts
+      WHERE ranked_drafts.id = drafts.id
+    )
+    WHERE queue_order <= 0;
+  `);
 }
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {

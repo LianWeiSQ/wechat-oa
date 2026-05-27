@@ -5,12 +5,10 @@ import { ANALYSIS_TEMPLATES } from "@/lib/analysis";
 import { DEFAULT_THEME_MODE, THEME_COOKIE_NAME, normalizeThemeMode } from "@/lib/theme";
 
 export default async function Home() {
-  const { articleStore, draftStore, writingStore } = stores();
-  const [articles, drafts, blueprints, structureRuns, cookieStore] = await Promise.all([
+  const { articleStore, draftStore } = stores();
+  const [articles, drafts, cookieStore] = await Promise.all([
     articleStore.listArticles(),
     draftStore.listDrafts(),
-    writingStore.listBlueprints(),
-    writingStore.listStructureRuns(),
     cookies(),
   ]);
   const initialThemeMode = normalizeThemeMode(cookieStore.get(THEME_COOKIE_NAME)?.value) ?? DEFAULT_THEME_MODE;
@@ -20,8 +18,6 @@ export default async function Home() {
       initialArticles={articles}
       initialDrafts={drafts}
       templates={ANALYSIS_TEMPLATES}
-      initialWritingBlueprints={blueprints}
-      initialWritingStructureRuns={structureRuns}
       initialThemeMode={initialThemeMode}
     />
   );

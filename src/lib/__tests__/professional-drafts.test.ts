@@ -41,9 +41,9 @@ const analysisRun: AnalysisRun = {
 };
 
 const aiSettings: AiSettings = {
-  baseUrl: "http://127.0.0.1:8787/v1",
-  apiKey: "codex-local",
-  model: "gpt-5.2",
+  baseUrl: "http://127.0.0.1:3000",
+  apiKey: "sk-test",
+  model: "gpt-5.4",
 };
 
 const imageSettings: ImageSettings = {

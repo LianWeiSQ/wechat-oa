@@ -45,6 +45,9 @@ export async function POST(request: Request) {
       title: article.title,
       body: article.bodyHtml,
       sourceAnalysisIds: [],
+      sourceArticleIds: [],
+      contentChannel: "wechat",
+      publishStatus: "draft",
       exportFormat: "html",
     });
 

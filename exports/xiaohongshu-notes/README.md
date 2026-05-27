@@ -24,4 +24,5 @@
 3. `03-harness-self-check.md`
 4. `04-taor-loop.md`
 5. `05-idempotency-and-state.md`
-
+6. `06-agent-interview-not-model.md`
+7. `07-silicon-tech-stack-launch.md`

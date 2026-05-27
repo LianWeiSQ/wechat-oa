@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const DEFAULT_HOST = process.env.CODEX_BRIDGE_HOST ?? "127.0.0.1";
-export const DEFAULT_PORT = Number(process.env.CODEX_BRIDGE_PORT ?? "8787");
-export const DEFAULT_API_KEY = process.env.CODEX_BRIDGE_API_KEY ?? "codex-local";
-export const DEFAULT_MODEL = process.env.CODEX_BRIDGE_MODEL ?? "gpt-5.2";
+export const DEFAULT_PORT = Number(process.env.CODEX_BRIDGE_PORT ?? "3000");
+export const DEFAULT_API_KEY = process.env.CODEX_BRIDGE_API_KEY ?? process.env.OPENAI_API_KEY ?? "codex-local";
+export const DEFAULT_MODEL = process.env.CODEX_BRIDGE_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.4";
 
 export function isAuthorized(headers, apiKey = DEFAULT_API_KEY) {
   const authorization = headers.get("authorization") ?? "";
@@ -54,6 +54,51 @@ export function toChatCompletionResponse({ content, model }) {
     usage: {
       prompt_tokens: 0,
       completion_tokens: 0,
+      total_tokens: 0,
+    },
+  };
+}
+
+export function buildMessagesFromResponsesBody(body) {
+  const messages = [];
+  if (typeof body.instructions === "string" && body.instructions.trim()) {
+    messages.push({ role: "system", content: body.instructions });
+  }
+  const input = Array.isArray(body.input) ? body.input : [{ role: "user", content: body.input ?? "" }];
+  for (const item of input) {
+    if (typeof item === "string") {
+      messages.push({ role: "user", content: item });
+      continue;
+    }
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    messages.push({
+      role: typeof item.role === "string" ? item.role : "user",
+      content: renderResponsesContent(item.content),
+    });
+  }
+  return messages;
+}
+
+export function toResponsesResponse({ content, model }) {
+  return {
+    id: `resp_codex_${Date.now().toString(36)}`,
+    object: "response",
+    created_at: Math.floor(Date.now() / 1000),
+    model,
+    output_text: content,
+    output: [
+      {
+        id: `msg_codex_${Date.now().toString(36)}`,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: content }],
+      },
+    ],
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
       total_tokens: 0,
     },
   };
@@ -118,6 +163,28 @@ export function createBridgeServer(options = {}) {
           timeoutMs,
         });
         sendJson(response, 200, toChatCompletionResponse({ content, model }));
+        return;
+      }
+
+      if ((url.pathname === "/v1/responses" || url.pathname === "/responses") && request.method === "POST") {
+        if (!isAuthorized(new Headers(request.headers), apiKey)) {
+          sendJson(response, 401, { error: { message: "Unauthorized", type: "invalid_request_error" } });
+          return;
+        }
+
+        const body = await readJsonBody(request);
+        if (body.stream) {
+          sendJson(response, 400, { error: { message: "stream=true is not supported by codex bridge yet" } });
+          return;
+        }
+
+        const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : defaultModel;
+        const content = await runCodex(buildCodexPrompt(buildMessagesFromResponsesBody(body)), {
+          model,
+          codexBin,
+          timeoutMs,
+        });
+        sendJson(response, 200, toResponsesResponse({ content, model }));
         return;
       }
 
@@ -225,6 +292,30 @@ function renderContent(content) {
     return content;
   }
   return JSON.stringify(content);
+}
+
+function renderResponsesContent(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return renderContent(content);
+  }
+  return content
+    .map((part) => {
+      if (typeof part === "string") {
+        return part;
+      }
+      if (!part || typeof part !== "object") {
+        return "";
+      }
+      if (typeof part.text === "string") {
+        return part.text;
+      }
+      return JSON.stringify(part);
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

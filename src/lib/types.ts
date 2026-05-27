@@ -1,10 +1,15 @@
 export type ArticleSourceType = "web" | "wechat" | "manual";
 
+export type ContentChannel = "wechat" | "xiaohongshu";
+
+export type PublishStatus = "draft" | "queued" | "published" | "archived";
+
 export type Article = {
   id: string;
   title: string;
   sourceType: ArticleSourceType;
   sourceName: string;
+  sourceProject?: string;
   /** @deprecated Use sourceName. Kept for compatibility with existing local data and code paths. */
   sourceAccount: string;
   originalUrl: string;
@@ -25,6 +30,7 @@ export type ArticleInput = {
   title: string;
   sourceType?: ArticleSourceType;
   sourceName?: string;
+  sourceProject?: string;
   sourceAccount?: string;
   originalUrl?: string;
   author?: string;
@@ -132,6 +138,13 @@ export type LocalDraft = {
   title: string;
   body: string;
   sourceAnalysisIds: string[];
+  sourceArticleIds?: string[];
+  contentChannel?: ContentChannel;
+  publishStatus?: PublishStatus;
+  plannedPublishAt?: string;
+  publishedAt?: string;
+  queueOrder?: number;
+  notes?: string;
   exportFormat: "markdown" | "html";
   wechatDraftStatus: "not_sent" | "sent" | "failed";
   wechatMediaId?: string;
@@ -337,6 +350,8 @@ export type AiWireApi = "chat-completions" | "responses";
 
 export type AiReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
+export type NetworkAccess = "enabled" | "disabled";
+
 export type AiSettings = {
   modelProvider?: string;
   baseUrl: string;
@@ -351,6 +366,11 @@ export type AiSettings = {
   wireApi?: AiWireApi;
   reasoningEffort?: AiReasoningEffort;
   disableResponseStorage?: boolean;
+  requiresOpenAiAuth?: boolean;
+  networkAccess?: NetworkAccess;
+  windowsWslSetupAcknowledged?: boolean;
+  modelContextWindow?: number;
+  modelAutoCompactTokenLimit?: number;
 };
 
 export type WeChatConfig = {

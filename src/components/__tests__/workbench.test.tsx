@@ -81,7 +81,7 @@ const writingBlueprint: WritingBlueprint = {
 };
 
 async function openReaderActions() {
-  await userEvent.click(screen.getByRole("button", { name: "文章操作" }));
+  await userEvent.click(screen.getByRole("button", { name: "素材操作" }));
 }
 
 async function clickReaderAction(name: string) {
@@ -144,8 +144,10 @@ describe("Workbench", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "技术文章库" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "微信公众号" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "外部引用素材" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "公众号本地文章" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "小红书本地文章" })).toBeInTheDocument();
+    expect(screen.getByText("2 篇外部引用素材 · 0 篇本地创作文章")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "打开配置中心" })).toHaveAttribute("href", "/settings");
     expect(screen.getByRole("main")).toHaveAttribute("data-theme", "light");
     await userEvent.click(screen.getByRole("button", { name: "切换到深色模式" }));
@@ -158,13 +160,13 @@ describe("Workbench", () => {
     expect(document.cookie).toContain(`${THEME_COOKIE_NAME}=light`);
     expect(screen.getByRole("heading", { name: "Agent 工程化成本拆解" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^筛选/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "文章操作" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "管理文章" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "素材操作" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "管理引用素材" })).not.toBeInTheDocument();
     await openReaderActions();
-    expect(screen.getByRole("button", { name: "管理文章" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "编辑正文" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "管理引用素材" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑素材正文" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "AI 拆解" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "新增文章" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新增引用素材" })).toBeInTheDocument();
     expect(screen.getByText("显示 2 / 2 篇")).toBeInTheDocument();
     await openReaderFilters();
     expect(screen.getByLabelText("分类")).toBeInTheDocument();
@@ -189,8 +191,8 @@ describe("Workbench", () => {
     expect(within(analysisDialog).getByText("高级处理")).toBeInTheDocument();
     await userEvent.click(within(analysisDialog).getByRole("button", { name: "关闭" }));
 
-    await clickReaderAction("新增文章");
-    const importDialog = screen.getByRole("dialog", { name: "新增文章" });
+    await clickReaderAction("新增引用素材");
+    const importDialog = screen.getByRole("dialog", { name: "新增引用素材" });
     expect(within(importDialog).getByRole("button", { name: "链接导入" })).toBeInTheDocument();
     expect(within(importDialog).getByRole("button", { name: "手动粘贴" })).toBeInTheDocument();
     await userEvent.click(within(importDialog).getByRole("button", { name: "关闭" }));
@@ -202,32 +204,32 @@ describe("Workbench", () => {
     expect(screen.getByRole("heading", { name: "RAG 评测体系" })).toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText("分类"), "全部");
-    await userEvent.type(screen.getByPlaceholderText("搜索标题、来源、标签、正文"), "RAG");
+    await userEvent.type(screen.getByPlaceholderText("搜索素材标题、来源、标签、正文"), "RAG");
 
     expect(screen.queryByText("Agent 工程化成本拆解")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "RAG 评测体系" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "清除检索条件" }));
-    await userEvent.type(screen.getByPlaceholderText("搜索标题、来源、标签、正文"), "事实性");
+    await userEvent.type(screen.getByPlaceholderText("搜索素材标题、来源、标签、正文"), "事实性");
     expect(screen.queryByText("Agent 工程化成本拆解")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "RAG 评测体系" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "打开文章：RAG 评测体系" }));
+    await userEvent.click(screen.getByRole("button", { name: "打开引用素材：RAG 评测体系" }));
     expect(screen.getByRole("heading", { name: "RAG 评测体系" })).toBeInTheDocument();
     expect(within(screen.getByRole("article")).queryByText("来源：LLM Lab")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "运行高级处理" })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "微信公众号" }));
+    await userEvent.click(screen.getByRole("button", { name: "公众号本地文章" }));
 
-    expect(screen.getByRole("heading", { name: "微信公众号生成" })).toBeInTheDocument();
-    expect(screen.getByText("当前素材")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "本地公众号文章" })).toBeInTheDocument();
+    expect(screen.getByText("当前引用素材")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /生成专业长文/ })).toBeInTheDocument();
     expect(screen.queryByText("图片模型配置")).not.toBeInTheDocument();
     expect(screen.queryByText("微信后台")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "新增文章" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新增引用素材" })).not.toBeInTheDocument();
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
     expect(screen.queryByText("Agent 成本来自工具调用和上下文膨胀。")).not.toBeInTheDocument();
   });
 
-  it("collapses the article rail into a drawer and restores article selection from it", async () => {
+  it("collapses and restores the article rail as part of the page layout", async () => {
     render(
       <Workbench
         initialArticles={articles}
@@ -250,20 +252,19 @@ describe("Workbench", () => {
     );
 
     expect(screen.getByText("显示 2 / 2 篇")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "收起文章栏" }));
+    await userEvent.click(screen.getByRole("button", { name: "收起素材栏" }));
 
     expect(screen.queryByText("显示 2 / 2 篇")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "展开文章栏" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "从左侧展开文章栏" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "展开素材栏" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "从左侧展开素材栏" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "从左侧展开文章栏" }));
-    const drawer = screen.getByRole("dialog", { name: "文章列表" });
-    expect(within(drawer).getByPlaceholderText("搜索标题、来源、标签、正文")).toBeInTheDocument();
-    expect(within(drawer).getByText("显示 2 / 2 篇")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "从左侧展开素材栏" }));
+    expect(screen.queryByRole("dialog", { name: "素材列表" })).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("搜索素材标题、来源、标签、正文")).toBeInTheDocument();
+    expect(screen.getByText("显示 2 / 2 篇")).toBeInTheDocument();
 
-    await userEvent.click(within(drawer).getByRole("button", { name: "打开文章：RAG 评测体系" }));
+    await userEvent.click(screen.getByRole("button", { name: "打开引用素材：RAG 评测体系" }));
 
-    expect(screen.queryByRole("dialog", { name: "文章列表" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "RAG 评测体系" })).toBeInTheDocument();
   });
 
@@ -300,7 +301,7 @@ describe("Workbench", () => {
       />,
     );
 
-    await clickReaderAction("特别收藏当前文章");
+    await clickReaderAction("特别收藏当前素材");
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/library/articles/art_agent",
@@ -311,7 +312,7 @@ describe("Workbench", () => {
     );
     expect(await screen.findByText("已加入特别收藏：Agent 工程化成本拆解")).toBeInTheDocument();
     await openReaderActions();
-    expect(screen.getByRole("button", { name: "取消特别收藏当前文章" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消特别收藏当前素材" })).toBeInTheDocument();
 
     await openReaderFilters();
     await userEvent.click(screen.getByRole("button", { name: "只看特别收藏" }));
@@ -364,8 +365,8 @@ describe("Workbench", () => {
       />,
     );
 
-    await clickReaderAction("编辑正文");
-    const dialog = screen.getByRole("dialog", { name: "编辑正文" });
+    await clickReaderAction("编辑素材正文");
+    const dialog = screen.getByRole("dialog", { name: "编辑素材正文" });
     await userEvent.click(within(dialog).getByRole("button", { name: "自动裁剪杂项" }));
 
     const contentInput = within(dialog).getByRole("textbox", { name: "正文" }) as HTMLElement;
@@ -418,8 +419,8 @@ describe("Workbench", () => {
       />,
     );
 
-    await clickReaderAction("编辑正文");
-    const dialog = screen.getByRole("dialog", { name: "编辑正文" });
+    await clickReaderAction("编辑素材正文");
+    const dialog = screen.getByRole("dialog", { name: "编辑素材正文" });
     const contentInput = within(dialog).getByRole("textbox", { name: "正文" }) as HTMLElement;
     contentInput.innerHTML = "";
 
@@ -460,8 +461,8 @@ describe("Workbench", () => {
       />,
     );
 
-    await clickReaderAction("管理文章");
-    const dialog = screen.getByRole("dialog", { name: "文章管理" });
+    await clickReaderAction("管理引用素材");
+    const dialog = screen.getByRole("dialog", { name: "引用素材管理" });
     expect(within(dialog).getByRole("button", { name: "全部智能分类" })).toBeInTheDocument();
 
     const row = within(dialog).getByText("Agent 工程化成本拆解").closest("form");
@@ -477,7 +478,7 @@ describe("Workbench", () => {
         body: expect.stringContaining('"category":"期货"'),
       }),
     );
-    expect(await screen.findByText("已更新分类：期货")).toBeInTheDocument();
+    expect(await screen.findByText("已更新引用信息：期货")).toBeInTheDocument();
   });
 
   it("deletes an article from the management panel after inline confirmation", async () => {
@@ -508,8 +509,8 @@ describe("Workbench", () => {
       />,
     );
 
-    await clickReaderAction("管理文章");
-    const dialog = screen.getByRole("dialog", { name: "文章管理" });
+    await clickReaderAction("管理引用素材");
+    const dialog = screen.getByRole("dialog", { name: "引用素材管理" });
     const row = within(dialog).getByText("Agent 工程化成本拆解").closest("form");
     expect(row).not.toBeNull();
 
@@ -518,7 +519,7 @@ describe("Workbench", () => {
     await userEvent.click(within(row as HTMLFormElement).getByRole("button", { name: "确认删除" }));
 
     expect(fetchMock).toHaveBeenCalledWith("/api/library/articles/art_agent", { method: "DELETE" });
-    expect(await screen.findByText("已删除文章：Agent 工程化成本拆解")).toBeInTheDocument();
+    expect(await screen.findByText("已删除引用素材：Agent 工程化成本拆解")).toBeInTheDocument();
     expect(within(dialog).queryByText("Agent 工程化成本拆解")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "RAG 评测体系" })).toBeInTheDocument();
   });
@@ -568,18 +569,18 @@ describe("Workbench", () => {
       />,
     );
 
-    await clickReaderAction("新增文章");
-    const importDialog = screen.getByRole("dialog", { name: "新增文章" });
+    await clickReaderAction("新增引用素材");
+    const importDialog = screen.getByRole("dialog", { name: "新增引用素材" });
     await userEvent.click(within(importDialog).getByRole("button", { name: "手动粘贴" }));
     await userEvent.type(screen.getByPlaceholderText("标题"), "上下文工程实践");
     await userEvent.type(screen.getByPlaceholderText("来源名称"), "Local Notes");
-    await userEvent.type(screen.getByPlaceholderText("文章链接"), "local://context-engineering");
+    await userEvent.type(screen.getByPlaceholderText("原文链接"), "local://context-engineering");
     await userEvent.type(screen.getByPlaceholderText("正文"), "上下文工程需要把需求、工具和验证组合成稳定流程。");
-    await userEvent.click(screen.getByRole("button", { name: "保存到本地库" }));
+    await userEvent.click(screen.getByRole("button", { name: "保存到引用素材库" }));
 
     expect(await screen.findByRole("heading", { name: "上下文工程实践" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "新增文章" })).not.toBeInTheDocument();
-    expect(screen.getByText("已保存到本地库：上下文工程实践")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "新增引用素材" })).not.toBeInTheDocument();
+    expect(screen.getByText("已保存到引用素材库：上下文工程实践")).toBeInTheDocument();
     expect(within(screen.getByRole("article")).queryByText("来源：Local Notes")).not.toBeInTheDocument();
     expect(within(screen.getByRole("article")).getByText("上下文工程需要把需求、工具和验证组合成稳定流程。")).toBeInTheDocument();
   });
@@ -633,13 +634,13 @@ describe("Workbench", () => {
       />,
     );
 
-    await clickReaderAction("新增文章");
-    await userEvent.type(screen.getByPlaceholderText("粘贴文章链接后解析"), importedArticle.originalUrl);
+    await clickReaderAction("新增引用素材");
+    await userEvent.type(screen.getByPlaceholderText("粘贴外部文章链接后解析"), importedArticle.originalUrl);
     await userEvent.click(screen.getByRole("button", { name: "链接解析" }));
 
     expect(await screen.findByRole("heading", { name: "Hugging Face 评估指南" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "新增文章" })).not.toBeInTheDocument();
-    expect(screen.getByText("已保存到本地库：Hugging Face 评估指南")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "新增引用素材" })).not.toBeInTheDocument();
+    expect(screen.getByText("已保存到引用素材库：Hugging Face 评估指南")).toBeInTheDocument();
   });
 
   it("clears successful import notices after a short delay", async () => {
@@ -685,9 +686,9 @@ describe("Workbench", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "文章操作" }));
-    fireEvent.click(screen.getByRole("button", { name: "新增文章" }));
-    fireEvent.change(screen.getByPlaceholderText("粘贴文章链接后解析"), {
+    fireEvent.click(screen.getByRole("button", { name: "素材操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "新增引用素材" }));
+    fireEvent.change(screen.getByPlaceholderText("粘贴外部文章链接后解析"), {
       target: { value: importedArticle.originalUrl },
     });
     fireEvent.click(screen.getByRole("button", { name: "链接解析" }));
@@ -697,14 +698,14 @@ describe("Workbench", () => {
       await Promise.resolve();
     });
 
-    expect(screen.queryByRole("dialog", { name: "新增文章" })).not.toBeInTheDocument();
-    expect(screen.getByText("已保存到本地库：短提示测试")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "新增引用素材" })).not.toBeInTheDocument();
+    expect(screen.getByText("已保存到引用素材库：短提示测试")).toBeInTheDocument();
 
     act(() => {
       vi.advanceTimersByTime(3500);
     });
 
-    expect(screen.queryByText("已保存到本地库：短提示测试")).not.toBeInTheDocument();
+    expect(screen.queryByText("已保存到引用素材库：短提示测试")).not.toBeInTheDocument();
   });
 
   it("normalizes imported HTML while keeping safe article images readable", () => {
@@ -790,11 +791,11 @@ describe("Workbench", () => {
       />,
     );
 
-    await clickReaderAction("新增文章");
-    await userEvent.type(screen.getByPlaceholderText("粘贴文章链接后解析"), "https://example.com/blocked");
+    await clickReaderAction("新增引用素材");
+    await userEvent.type(screen.getByPlaceholderText("粘贴外部文章链接后解析"), "https://example.com/blocked");
     await userEvent.click(screen.getByRole("button", { name: "链接解析" }));
 
-    const importDialog = screen.getByRole("dialog", { name: "新增文章" });
+    const importDialog = screen.getByRole("dialog", { name: "新增引用素材" });
     expect(await within(importDialog).findByText("无法解析文章正文，请改用手动粘贴")).toBeInTheDocument();
     expect(within(importDialog).getByRole("button", { name: "手动粘贴" })).toBeInTheDocument();
   });
@@ -845,17 +846,23 @@ describe("Workbench", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "微信公众号" }));
-    expect(screen.getByRole("button", { name: "拆解当前文章结构" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "用所选文章生成结构蓝图" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "公众号本地文章" }));
+    expect(screen.getByRole("button", { name: "拆解当前素材结构" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "用所选素材生成结构蓝图" })).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("原创选题"), "想转 Agent 工程师，先补齐哪些工程能力？");
-    await userEvent.click(screen.getByRole("button", { name: "根据选题生成原创文章" }));
+    await userEvent.click(screen.getByRole("button", { name: "生成微信公众号原创稿" }));
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/writing/drafts",
       expect.objectContaining({
         method: "POST",
         body: expect.stringContaining("想转 Agent 工程师"),
+      }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/writing/drafts",
+      expect.objectContaining({
+        body: expect.stringContaining('"channel":"wechat"'),
       }),
     );
     expect((await screen.findAllByText("想转 Agent 工程师，先补齐工程闭环")).length).toBeGreaterThan(0);
@@ -886,7 +893,7 @@ describe("Workbench", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "微信公众号" }));
+    await userEvent.click(screen.getByRole("button", { name: "公众号本地文章" }));
 
     const pipeline = screen.getByLabelText("公众号 Agent 流程");
     expect(within(pipeline).getByText("结构拆解 Agent")).toBeInTheDocument();
@@ -933,8 +940,8 @@ describe("Workbench", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "微信公众号" }));
-    await userEvent.click(screen.getByRole("button", { name: "拆解当前文章结构" }));
+    await userEvent.click(screen.getByRole("button", { name: "公众号本地文章" }));
+    await userEvent.click(screen.getByRole("button", { name: "拆解当前素材结构" }));
 
     expect(fetchMock).toHaveBeenCalledWith("/api/library/articles/art_agent/structure", { method: "POST" });
     await screen.findAllByText("问题场景 + 工程闭环判断");

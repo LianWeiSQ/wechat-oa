@@ -1,0 +1,13 @@
+.git
+.next
+node_modules
+coverage
+data
+exports
+.env*
+.DS_Store
+*.log
+*.tsbuildinfo
+SESSION_BRIEF.md
+.codex-sessions
+.superpowers

@@ -7,6 +7,7 @@ import type {
   AiWireApi,
   ImageSettings,
   ImageSize,
+  NetworkAccess,
   PublicImageSettings,
   PublicWeChatConfig,
   WeChatConfig,
@@ -15,14 +16,19 @@ import type {
 const AI_KEY = "ai";
 const WECHAT_KEY = "wechat";
 const IMAGE_KEY = "image";
-const DEFAULT_AI_MODEL_PROVIDER = "crs";
-const DEFAULT_AI_BASE_URL = "https://vip.auto-code.net";
+const DEFAULT_AI_MODEL_PROVIDER = "OpenAI";
+const DEFAULT_AI_BASE_URL = "http://127.0.0.1:3000";
 const DEFAULT_AI_API_KEY = "";
 const DEFAULT_AI_MODEL = "gpt-5.4";
 const DEFAULT_AI_REVIEW_MODEL = "gpt-5.4";
 const DEFAULT_AI_WIRE_API: AiWireApi = "responses";
 const DEFAULT_AI_REASONING_EFFORT: AiReasoningEffort = "xhigh";
 const DEFAULT_AI_DISABLE_RESPONSE_STORAGE = true;
+const DEFAULT_AI_REQUIRES_OPENAI_AUTH = true;
+const DEFAULT_AI_NETWORK_ACCESS: NetworkAccess = "enabled";
+const DEFAULT_AI_WINDOWS_WSL_SETUP_ACKNOWLEDGED = true;
+const DEFAULT_AI_MODEL_CONTEXT_WINDOW = 1_000_000;
+const DEFAULT_AI_MODEL_AUTO_COMPACT_TOKEN_LIMIT = 900_000;
 const DEFAULT_IMAGE_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 const DEFAULT_IMAGE_SIZE: ImageSize = "1536x1024";
@@ -30,6 +36,10 @@ const DEFAULT_IMAGE_SIZE: ImageSize = "1536x1024";
 export function createSettingsStore(db: DatabaseSync) {
   return {
     getAiSettings(): AiSettings {
+      if (hasLocalAiEnvConfig()) {
+        return getLocalEnvAiSettings();
+      }
+
       const saved = getJson<Partial<AiSettings> & { apiKeyEncrypted?: string; reviewApiKeyEncrypted?: string }>(db, AI_KEY, {});
       const apiKey = saved.apiKeyEncrypted
         ? unsealSecret(saved.apiKeyEncrypted)
@@ -59,10 +69,31 @@ export function createSettingsStore(db: DatabaseSync) {
           saved.disableResponseStorage ?? process.env.OPENAI_DISABLE_RESPONSE_STORAGE,
           DEFAULT_AI_DISABLE_RESPONSE_STORAGE,
         ),
+        requiresOpenAiAuth: normalizeBoolean(
+          saved.requiresOpenAiAuth ?? process.env.OPENAI_REQUIRES_OPENAI_AUTH,
+          DEFAULT_AI_REQUIRES_OPENAI_AUTH,
+        ),
+        networkAccess: normalizeNetworkAccess(saved.networkAccess ?? process.env.OPENAI_NETWORK_ACCESS),
+        windowsWslSetupAcknowledged: normalizeBoolean(
+          saved.windowsWslSetupAcknowledged ?? process.env.OPENAI_WINDOWS_WSL_SETUP_ACKNOWLEDGED,
+          DEFAULT_AI_WINDOWS_WSL_SETUP_ACKNOWLEDGED,
+        ),
+        modelContextWindow: normalizePositiveInteger(
+          saved.modelContextWindow ?? process.env.OPENAI_MODEL_CONTEXT_WINDOW,
+          DEFAULT_AI_MODEL_CONTEXT_WINDOW,
+        ),
+        modelAutoCompactTokenLimit: normalizePositiveInteger(
+          saved.modelAutoCompactTokenLimit ?? process.env.OPENAI_MODEL_AUTO_COMPACT_TOKEN_LIMIT,
+          DEFAULT_AI_MODEL_AUTO_COMPACT_TOKEN_LIMIT,
+        ),
       };
     },
 
     saveAiSettings(input: Partial<AiSettings>): AiSettings {
+      if (hasLocalAiEnvConfig()) {
+        return getLocalEnvAiSettings();
+      }
+
       const normalized = normalizeAiSettings(input, this.getAiSettings());
       setJson(db, AI_KEY, {
         modelProvider: normalized.modelProvider,
@@ -78,6 +109,11 @@ export function createSettingsStore(db: DatabaseSync) {
         wireApi: normalized.wireApi,
         reasoningEffort: normalized.reasoningEffort,
         disableResponseStorage: normalized.disableResponseStorage,
+        requiresOpenAiAuth: normalized.requiresOpenAiAuth,
+        networkAccess: normalized.networkAccess,
+        windowsWslSetupAcknowledged: normalized.windowsWslSetupAcknowledged,
+        modelContextWindow: normalized.modelContextWindow,
+        modelAutoCompactTokenLimit: normalized.modelAutoCompactTokenLimit,
       });
       return normalized;
     },
@@ -168,6 +204,54 @@ export function createSettingsStore(db: DatabaseSync) {
   };
 }
 
+export function hasLocalAiEnvConfig(): boolean {
+  return [
+    "OPENAI_MODEL_PROVIDER",
+    "OPENAI_BASE_URL",
+    "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "OPENAI_REVIEW_MODEL",
+    "OPENAI_WIRE_API",
+    "OPENAI_REASONING_EFFORT",
+  ].some((key) => Boolean(process.env[key]?.trim()));
+}
+
+export function getLocalEnvAiSettings(): AiSettings {
+  const modelProvider = process.env.OPENAI_MODEL_PROVIDER ?? DEFAULT_AI_MODEL_PROVIDER;
+  const baseUrl = process.env.OPENAI_BASE_URL ?? DEFAULT_AI_BASE_URL;
+  const apiKey = process.env.OPENAI_API_KEY ?? DEFAULT_AI_API_KEY;
+  const model = process.env.OPENAI_MODEL ?? DEFAULT_AI_MODEL;
+  const wireApi = normalizeAiWireApi(process.env.OPENAI_WIRE_API);
+  const reasoningEffort = normalizeAiReasoningEffort(process.env.OPENAI_REASONING_EFFORT);
+
+  return {
+    modelProvider,
+    baseUrl,
+    apiKey,
+    model,
+    reviewModel: process.env.OPENAI_REVIEW_MODEL ?? model,
+    reviewModelProvider: process.env.OPENAI_REVIEW_MODEL_PROVIDER ?? modelProvider,
+    reviewBaseUrl: process.env.OPENAI_REVIEW_BASE_URL ?? baseUrl,
+    reviewApiKey: process.env.OPENAI_REVIEW_API_KEY ?? apiKey,
+    reviewWireApi: normalizeAiWireApi(process.env.OPENAI_REVIEW_WIRE_API ?? wireApi),
+    reviewReasoningEffort: normalizeAiReasoningEffort(process.env.OPENAI_REVIEW_REASONING_EFFORT ?? reasoningEffort),
+    wireApi,
+    reasoningEffort,
+    disableResponseStorage: normalizeBoolean(process.env.OPENAI_DISABLE_RESPONSE_STORAGE, DEFAULT_AI_DISABLE_RESPONSE_STORAGE),
+    requiresOpenAiAuth: normalizeBoolean(process.env.OPENAI_REQUIRES_OPENAI_AUTH, DEFAULT_AI_REQUIRES_OPENAI_AUTH),
+    networkAccess: normalizeNetworkAccess(process.env.OPENAI_NETWORK_ACCESS),
+    windowsWslSetupAcknowledged: normalizeBoolean(
+      process.env.OPENAI_WINDOWS_WSL_SETUP_ACKNOWLEDGED,
+      DEFAULT_AI_WINDOWS_WSL_SETUP_ACKNOWLEDGED,
+    ),
+    modelContextWindow: normalizePositiveInteger(process.env.OPENAI_MODEL_CONTEXT_WINDOW, DEFAULT_AI_MODEL_CONTEXT_WINDOW),
+    modelAutoCompactTokenLimit: normalizePositiveInteger(
+      process.env.OPENAI_MODEL_AUTO_COMPACT_TOKEN_LIMIT,
+      DEFAULT_AI_MODEL_AUTO_COMPACT_TOKEN_LIMIT,
+    ),
+  };
+}
+
 export function toPublicImageSettings(settings: ImageSettings): PublicImageSettings {
   return {
     baseUrl: settings.baseUrl,
@@ -202,6 +286,17 @@ export function normalizeAiSettings(input: Partial<AiSettings>, current?: AiSett
     disableResponseStorage: normalizeBoolean(
       input.disableResponseStorage ?? current?.disableResponseStorage,
       DEFAULT_AI_DISABLE_RESPONSE_STORAGE,
+    ),
+    requiresOpenAiAuth: normalizeBoolean(input.requiresOpenAiAuth ?? current?.requiresOpenAiAuth, DEFAULT_AI_REQUIRES_OPENAI_AUTH),
+    networkAccess: normalizeNetworkAccess(input.networkAccess ?? current?.networkAccess),
+    windowsWslSetupAcknowledged: normalizeBoolean(
+      input.windowsWslSetupAcknowledged ?? current?.windowsWslSetupAcknowledged,
+      DEFAULT_AI_WINDOWS_WSL_SETUP_ACKNOWLEDGED,
+    ),
+    modelContextWindow: normalizePositiveInteger(input.modelContextWindow ?? current?.modelContextWindow, DEFAULT_AI_MODEL_CONTEXT_WINDOW),
+    modelAutoCompactTokenLimit: normalizePositiveInteger(
+      input.modelAutoCompactTokenLimit ?? current?.modelAutoCompactTokenLimit,
+      DEFAULT_AI_MODEL_AUTO_COMPACT_TOKEN_LIMIT,
     ),
   };
 }
@@ -262,6 +357,15 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
     }
   }
   return fallback;
+}
+
+function normalizeNetworkAccess(value?: string): NetworkAccess {
+  return value === "disabled" ? "disabled" : DEFAULT_AI_NETWORK_ACCESS;
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function setJson(db: DatabaseSync, key: string, value: unknown): void {

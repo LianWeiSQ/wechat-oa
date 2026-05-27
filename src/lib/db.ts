@@ -34,6 +34,7 @@ export function migrate(db: DatabaseSync): void {
       title TEXT NOT NULL,
       source_type TEXT NOT NULL DEFAULT 'wechat',
       source_name TEXT NOT NULL DEFAULT '',
+      source_project TEXT NOT NULL DEFAULT '',
       source_account TEXT NOT NULL,
       original_url TEXT NOT NULL UNIQUE,
       author TEXT NOT NULL DEFAULT '',
@@ -85,6 +86,13 @@ export function migrate(db: DatabaseSync): void {
       title TEXT NOT NULL,
       body TEXT NOT NULL,
       source_analysis_ids_json TEXT NOT NULL DEFAULT '[]',
+      source_article_ids_json TEXT NOT NULL DEFAULT '[]',
+      content_channel TEXT NOT NULL DEFAULT 'wechat',
+      publish_status TEXT NOT NULL DEFAULT 'draft',
+      planned_publish_at TEXT NOT NULL DEFAULT '',
+      published_at TEXT NOT NULL DEFAULT '',
+      queue_order INTEGER NOT NULL DEFAULT 0,
+      notes TEXT NOT NULL DEFAULT '',
       export_format TEXT NOT NULL DEFAULT 'markdown',
       wechat_draft_status TEXT NOT NULL DEFAULT 'not_sent',
       wechat_media_id TEXT,
@@ -250,17 +258,31 @@ export function migrate(db: DatabaseSync): void {
   `);
   ensureColumn(db, "articles", "source_type", "TEXT NOT NULL DEFAULT 'wechat'");
   ensureColumn(db, "articles", "source_name", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "articles", "source_project", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "articles", "content_html", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "articles", "content_text", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "articles", "category", "TEXT NOT NULL DEFAULT '未分类'");
   ensureColumn(db, "articles", "is_favorite", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "draft_image_assets", "asset_id", "TEXT");
+  ensureColumn(db, "drafts", "source_article_ids_json", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "drafts", "content_channel", "TEXT NOT NULL DEFAULT 'wechat'");
+  ensureColumn(db, "drafts", "publish_status", "TEXT NOT NULL DEFAULT 'draft'");
+  ensureColumn(db, "drafts", "planned_publish_at", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "drafts", "published_at", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "drafts", "queue_order", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "drafts", "notes", "TEXT NOT NULL DEFAULT ''");
   db.exec("CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category, updated_at DESC);");
   db.exec("CREATE INDEX IF NOT EXISTS idx_articles_favorite ON articles(is_favorite, updated_at DESC);");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_articles_source_project ON articles(source_project, updated_at DESC);");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_drafts_channel_queue ON drafts(content_channel, publish_status, queue_order, updated_at DESC);");
   db.exec(`
     UPDATE articles
     SET source_name = source_account
     WHERE source_name = '';
+
+    UPDATE articles
+    SET source_project = source_name
+    WHERE source_project = '';
 
     UPDATE articles
     SET content_html = content
@@ -269,6 +291,10 @@ export function migrate(db: DatabaseSync): void {
     UPDATE articles
     SET content_text = content
     WHERE content_text = '';
+
+    UPDATE drafts
+    SET publish_status = 'published'
+    WHERE publish_status = 'draft' AND wechat_draft_status = 'sent';
   `);
 }
 

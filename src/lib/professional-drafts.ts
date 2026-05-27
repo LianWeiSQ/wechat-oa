@@ -13,7 +13,10 @@ import type {
 } from "@/lib/types";
 
 type DraftStore = {
-  createDraft(input: Pick<LocalDraft, "title" | "body" | "sourceAnalysisIds" | "exportFormat">): LocalDraft | Promise<LocalDraft>;
+  createDraft(
+    input: Pick<LocalDraft, "title" | "body" | "sourceAnalysisIds" | "exportFormat"> &
+      Partial<Pick<LocalDraft, "sourceArticleIds" | "contentChannel" | "publishStatus">>,
+  ): LocalDraft | Promise<LocalDraft>;
   updateDraftBody(id: string, body: string): LocalDraft | null | Promise<LocalDraft | null>;
 };
 
@@ -50,6 +53,9 @@ export async function createProfessionalDraftWithImages(input: {
     title: professionalDraft.title,
     body: professionalDraft.bodyHtml,
     sourceAnalysisIds: [input.analysisRun.id],
+    sourceArticleIds: [input.article.id],
+    contentChannel: "wechat",
+    publishStatus: "draft",
     exportFormat: "html",
   });
 

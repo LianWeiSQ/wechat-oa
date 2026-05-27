@@ -1,0 +1,24 @@
+services:
+  wechat-oa:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wechat-oa:local
+    container_name: wechat-oa
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 3001
+      WECHAT_OA_DB_PATH: /app/data/wechat-oa.sqlite
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL_DOCKER:-http://host.docker.internal:8080}
+      OPENAI_REVIEW_BASE_URL: ${OPENAI_REVIEW_BASE_URL_DOCKER:-http://host.docker.internal:8080}
+    ports:
+      - "3001:3001"
+    volumes:
+      - wechat_oa_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  wechat_oa_data:

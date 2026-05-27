@@ -47,6 +47,7 @@ export async function importUrlArticle(
   store: ArticleStore,
   originalUrl: string,
   fetcher: ImportFetch = fetch,
+  options: { sourceProject?: string } = {},
 ): Promise<UrlImportResult> {
   const url = originalUrl.trim();
   if (!url) {
@@ -66,14 +67,18 @@ export async function importUrlArticle(
 
     const html = await response.text();
     const parsed = parseArticleHtml(html, url);
-    if (!parsed.article.contentText?.trim() || !parsed.article.title.trim()) {
+    const articleInput = {
+      ...parsed.article,
+      sourceProject: options.sourceProject?.trim() || parsed.article.sourceProject || parsed.article.sourceName,
+    };
+    if (!articleInput.contentText?.trim() || !articleInput.title.trim()) {
       return createFallback(url, "无法解析文章正文，请改用手动粘贴", parsed.parseRun);
     }
     const existing = store.getArticleByUrl ? await store.getArticleByUrl(url) : null;
     const article =
       existing && store.updateArticle
-        ? (await store.updateArticle(existing.id, parsed.article)) ?? existing
-        : await store.createArticle(parsed.article);
+        ? (await store.updateArticle(existing.id, articleInput)) ?? existing
+        : await store.createArticle(articleInput);
     const parseRun = await store.saveParseRun({ ...parsed.parseRun, articleId: article.id });
     return { ok: true, article, parseRun };
   } catch (error) {
@@ -134,6 +139,7 @@ function parseWeChatHtml(html: string, originalUrl: string): { article: ArticleI
       title,
       sourceType: "wechat",
       sourceName,
+      sourceProject: sourceName,
       originalUrl,
       author,
       publishedAt,
@@ -167,6 +173,7 @@ function parseGenericHtml(html: string, originalUrl: string): { article: Article
       title,
       sourceType: "web",
       sourceName,
+      sourceProject: sourceName,
       originalUrl,
       author,
       publishedAt,

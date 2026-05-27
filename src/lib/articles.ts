@@ -8,6 +8,7 @@ type ArticleRow = {
   title: string;
   source_type: ArticleSourceType;
   source_name: string;
+  source_project: string;
   source_account: string;
   original_url: string;
   author: string;
@@ -80,6 +81,7 @@ export function createArticleStore(db: DatabaseSync) {
       const timestamp = nowIso();
       const sourceType = normalizeSourceType(input.sourceType, originalUrl);
       const sourceName = normalizeRequiredText(input.sourceName ?? input.sourceAccount, "未知来源");
+      const sourceProject = normalizeSourceProject(input.sourceProject, sourceName);
       const contentHtml = normalizeContentHtml(input);
       const contentText = normalizeContentText(input, contentHtml);
       const category = input.category?.trim()
@@ -90,6 +92,7 @@ export function createArticleStore(db: DatabaseSync) {
         title: input.title.trim(),
         sourceType,
         sourceName,
+        sourceProject,
         sourceAccount: sourceName,
         originalUrl,
         author: input.author?.trim() ?? "",
@@ -106,15 +109,16 @@ export function createArticleStore(db: DatabaseSync) {
 
       db.prepare(`
         INSERT INTO articles (
-          id, title, source_type, source_name, source_account, original_url, author, published_at,
+          id, title, source_type, source_name, source_project, source_account, original_url, author, published_at,
           content_html, content_text, content, category, is_favorite, tags_json, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         article.id,
         article.title,
         article.sourceType,
         article.sourceName,
+        article.sourceProject ?? article.sourceName,
         article.sourceAccount,
         article.originalUrl,
         article.author,
@@ -154,6 +158,7 @@ export function createArticleStore(db: DatabaseSync) {
       const originalUrl = input.originalUrl === undefined ? existing.originalUrl : normalizeOriginalUrl(input.originalUrl);
       const sourceType = normalizeSourceType(input.sourceType ?? existing.sourceType, originalUrl);
       const sourceName = normalizeRequiredText(input.sourceName ?? input.sourceAccount ?? existing.sourceName, existing.sourceName);
+      const sourceProject = input.sourceProject === undefined ? articleSourceProject(existing) : normalizeSourceProject(input.sourceProject, sourceName);
       const contentHtml = (input.contentHtml ?? input.content ?? input.contentText ?? existing.contentHtml).trim();
       const contentText = (input.contentText ?? stripHtml(contentHtml)).trim();
       const category = input.category === undefined ? existing.category : normalizeArticleCategory(input.category);
@@ -163,7 +168,7 @@ export function createArticleStore(db: DatabaseSync) {
 
       db.prepare(`
         UPDATE articles
-        SET title = ?, source_type = ?, source_name = ?, source_account = ?, original_url = ?,
+        SET title = ?, source_type = ?, source_name = ?, source_project = ?, source_account = ?, original_url = ?,
             author = ?, published_at = ?, content_html = ?, content_text = ?, content = ?,
             category = ?, is_favorite = ?, tags_json = ?, updated_at = ?
         WHERE id = ?
@@ -171,6 +176,7 @@ export function createArticleStore(db: DatabaseSync) {
         title,
         sourceType,
         sourceName,
+        sourceProject,
         sourceName,
         originalUrl,
         input.author ?? existing.author,
@@ -203,7 +209,7 @@ export function createArticleStore(db: DatabaseSync) {
         return articles;
       }
       return articles.filter((article) =>
-        [article.title, article.sourceAccount, article.author, article.category, article.tags.join(" ")]
+        [article.title, article.sourceName, article.sourceProject ?? "", article.sourceAccount, article.author, article.category, article.tags.join(" ")]
           .join(" ")
           .toLowerCase()
           .includes(needle),
@@ -337,6 +343,15 @@ function normalizeRequiredText(value: string | undefined, fallback: string): str
   return trimmed && trimmed.length > 0 ? trimmed : fallback;
 }
 
+function normalizeSourceProject(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : fallback;
+}
+
+function articleSourceProject(article: Article): string {
+  return article.sourceProject?.trim() || article.sourceName || article.sourceAccount || "引用知识库";
+}
+
 function normalizeContentHtml(input: ArticleInput): string {
   return (input.contentHtml ?? input.content ?? input.contentText ?? "").trim();
 }
@@ -362,6 +377,7 @@ function mapArticle(row: ArticleRow): Article {
     title: row.title,
     sourceType: row.source_type || normalizeSourceType(undefined, row.original_url),
     sourceName,
+    sourceProject: row.source_project || sourceName,
     sourceAccount: sourceName,
     originalUrl: row.original_url,
     author: row.author,

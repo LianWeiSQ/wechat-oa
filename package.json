@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 3001",
     "codex:server": "node scripts/codex-bridge.mjs",
     "db:migrate:supabase": "node scripts/migrate-sqlite-to-supabase.mjs",
+    "export:local-drafts": "node scripts/export-local-drafts.mjs",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest"

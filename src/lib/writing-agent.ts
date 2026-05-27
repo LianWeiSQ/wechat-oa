@@ -4,6 +4,7 @@ import { createId, nowIso } from "@/lib/ids";
 import type {
   AiSettings,
   Article,
+  ContentChannel,
   DraftReview,
   LocalDraft,
   OriginalArticleDraft,
@@ -23,7 +24,10 @@ type WritingStore = {
 };
 
 type DraftStore = {
-  createDraft(input: Pick<LocalDraft, "title" | "body" | "sourceAnalysisIds" | "exportFormat">): MaybePromise<LocalDraft>;
+  createDraft(
+    input: Pick<LocalDraft, "title" | "body" | "sourceAnalysisIds" | "exportFormat"> &
+      Partial<Pick<LocalDraft, "sourceArticleIds" | "contentChannel" | "publishStatus">>,
+  ): MaybePromise<LocalDraft>;
 };
 
 const structureSchema = z.object({
@@ -375,11 +379,13 @@ export function parseTechnicalBriefResponse(raw: unknown): WritingTechnicalBrief
 export function createOriginalDraftRequest(input: {
   topic: string;
   articles: Article[];
+  channel?: ContentChannel;
   blueprint?: WritingBlueprint | null;
   structureRuns?: WritingStructureRun[];
   technicalBrief?: WritingTechnicalBrief;
   model: string;
 }): ModelRequest {
+  const channel = normalizeContentChannel(input.channel);
   return {
     model: input.model,
     temperature: 0.42,
@@ -399,14 +405,16 @@ export function createOriginalDraftRequest(input: {
           "文章要有公众号手感：短段落、信息量小标题、人的观察、强判断、适度留白；不要写成一二三四式培训课件。",
           "输出必须能被 JSON.parse 直接解析；bodyHtml 字符串内不要使用未转义的英文双引号，正文引用请用中文引号或 &quot;。",
           "只输出 JSON，不要 Markdown，不要解释 JSON 外的内容。",
+          channelSystemInstruction(channel),
         ].join("\n"),
       },
       {
         role: "user",
         content: [
           `选题：${input.topic}`,
+          `目标平台：${channelLabel(channel)}`,
           "",
-          "请生成一篇可进入微信公众号草稿箱的原创技术文章。",
+          `请生成一篇可进入${channelLabel(channel)}作品库的原创技术内容。`,
           "",
           "必须返回 JSON 字段：",
           "title: string",
@@ -427,6 +435,7 @@ export function createOriginalDraftRequest(input: {
           "7. 证据：可以引用参考文章里的设计对象和结构资产，但要讲因果关系，不要堆路径，不确定的源码路径不要写死。",
           "8. 主编重写：如果初稿像技术文档、AI 味重、开头弱、标题不够公众号，请先自我重写后再输出最终 JSON。",
           "9. 质检：自评低于 75 分时必须继续重写；最终 editorialScore 要诚实，不能虚高。",
+          channelWritingInstruction(channel),
           "",
           "推荐结构：真实工程观察开头 -> 反常识判断 -> 用读者熟悉的失败模式解释 Harness -> 拆 3 个关键机制 -> 给项目/面试可用框架 -> 克制结尾。",
           "原创约束：参考文章只作为素材和结构来源，不得复刻来源文章的长句、段落、标题和销售表达。",
@@ -464,6 +473,7 @@ export function createOriginalDraftRequest(input: {
 export async function generateOriginalDraftFromTopic(input: {
   topic: string;
   articles: Article[];
+  channel?: ContentChannel;
   blueprint?: WritingBlueprint | null;
   structureRuns?: WritingStructureRun[];
   settings: AiSettings;
@@ -500,6 +510,7 @@ export async function generateOriginalDraftFromTopic(input: {
   const request = createOriginalDraftRequest({
     topic,
     articles: input.articles,
+    channel: input.channel,
     blueprint: input.blueprint,
     structureRuns: input.structureRuns,
     technicalBrief,
@@ -509,6 +520,7 @@ export async function generateOriginalDraftFromTopic(input: {
   const review = await reviewAndReviseDraft({
     topic,
     articles: input.articles,
+    channel: input.channel,
     technicalBrief,
     draft: draftBeforeReview,
     settings: reviewSettings,
@@ -520,6 +532,9 @@ export async function generateOriginalDraftFromTopic(input: {
     title: originalDraft.title,
     body: originalDraft.bodyHtml,
     sourceAnalysisIds: [],
+    sourceArticleIds: input.articles.map((article) => article.id),
+    contentChannel: normalizeContentChannel(input.channel),
+    publishStatus: "draft",
     exportFormat: "html",
   });
   return { draft, originalDraft, draftBeforeReview, technicalBrief, review, warnings };
@@ -547,10 +562,12 @@ export async function generateTechnicalBrief(input: {
 export function createDraftReviewRequest(input: {
   topic: string;
   articles: Article[];
+  channel?: ContentChannel;
   technicalBrief: WritingTechnicalBrief;
   draft: OriginalArticleDraft;
   model: string;
 }): ModelRequest {
+  const channel = normalizeContentChannel(input.channel);
   return {
     model: input.model,
     temperature: 0.12,
@@ -563,7 +580,8 @@ export function createDraftReviewRequest(input: {
           "你是技术公众号的审稿 Agent，负责事实核验、删虚假场景、删 CTA、压缩废话并给出最终可发稿。",
           "审稿必须严格：不确定的源码路径、数据、具体事故、朋友案例要删除或改成克制表述。",
           "禁止课程、社群、资料领取、加微信、保持关注等转化 CTA。",
-          "如果文章像技术文档，要改成公众号可读；如果文章像营销文，要改成工程判断。",
+          `如果文章像技术文档，要改成${channelLabel(channel)}可读；如果文章像营销文，要改成工程判断。`,
+          channelReviewInstruction(channel),
           "只输出 JSON，不要 Markdown，不要解释 JSON 外的内容。",
         ].join("\n"),
       },
@@ -607,6 +625,7 @@ export function createDraftReviewRequest(input: {
 export async function reviewAndReviseDraft(input: {
   topic: string;
   articles: Article[];
+  channel?: ContentChannel;
   technicalBrief: WritingTechnicalBrief;
   draft: OriginalArticleDraft;
   settings: AiSettings;
@@ -616,6 +635,7 @@ export async function reviewAndReviseDraft(input: {
   const request = createDraftReviewRequest({
     topic: input.topic,
     articles: input.articles,
+    channel: input.channel,
     technicalBrief: input.technicalBrief,
     draft: input.draft,
     model: input.settings.model,
@@ -1113,6 +1133,38 @@ function uniqueArticles(articles: Article[]): Article[] {
     seen.add(article.id);
     return true;
   });
+}
+
+function normalizeContentChannel(channel: ContentChannel | undefined): ContentChannel {
+  return channel === "xiaohongshu" ? "xiaohongshu" : "wechat";
+}
+
+function channelLabel(channel: ContentChannel): string {
+  return channel === "xiaohongshu" ? "小红书" : "微信公众号";
+}
+
+function channelSystemInstruction(channel: ContentChannel): string {
+  if (channel === "xiaohongshu") {
+    return [
+      "小红书版本要像一篇技术人愿意收藏的经验笔记：标题更口语，开头 80 字内直接给判断，段落更短，列表更清楚。",
+      "可以有轻量标签感和行动建议，但不要写成泛泛鸡汤、流量号标题或课程引流。",
+    ].join("\n");
+  }
+  return "微信公众号版本要有完整论证链、段落节奏和可收藏的工程框架，适合读者在通勤或工作间隙读完。";
+}
+
+function channelWritingInstruction(channel: ContentChannel): string {
+  if (channel === "xiaohongshu") {
+    return "小红书结构建议：一句话反常识开头 -> 3-5 个可保存的工程判断 -> 一个小项目练习建议 -> 克制收尾。正文仍输出安全 HTML，但小标题要短、段落要轻。";
+  }
+  return "公众号结构建议：真实工程观察开头 -> 反常识判断 -> 机制拆解 -> 项目/职业建议 -> 克制结尾。";
+}
+
+function channelReviewInstruction(channel: ContentChannel): string {
+  if (channel === "xiaohongshu") {
+    return "审稿时额外检查：标题是否像小红书笔记，首屏是否足够快，正文是否可截图收藏，是否过度公众号长文腔。";
+  }
+  return "审稿时额外检查：标题、开头、段落节奏、信息密度是否达到公众号发布标准。";
 }
 
 function clipText(value: string, maxLength: number): string {

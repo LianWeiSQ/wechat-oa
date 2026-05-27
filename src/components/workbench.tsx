@@ -39,9 +39,11 @@ import type {
   AnalysisTemplate,
   Article,
   ArticleParseRun,
+  ContentChannel,
   ContentAgentRun,
   DraftImageAsset,
   LocalDraft,
+  PublishStatus,
   SourceReuseWarning,
   WritingBlueprint,
   WritingStructureRun,
@@ -50,6 +52,7 @@ import type { ThemeMode } from "@/lib/theme";
 
 type WorkbenchProps = {
   initialArticles: Article[];
+  initialDrafts?: LocalDraft[];
   templates: AnalysisTemplate[];
   initialAiSettings?: unknown;
   initialImageSettings?: unknown;
@@ -64,12 +67,13 @@ type Notice = {
   text: string;
 };
 
-type Workspace = "library" | "wechat";
+type Workspace = "library" | "wechat" | "xiaohongshu";
 type ImportMode = "url" | "manual";
 type ActiveModal = "analysis" | "import" | "edit" | "manage" | null;
 type ReaderDropdown = "actions" | "filters" | null;
 type SourceFilter = "all" | Article["sourceType"];
 type FavoriteFilter = "all" | "favorites";
+type ProjectFilter = "全部";
 type SortMode = "updatedDesc" | "publishedDesc" | "titleAsc" | "wordCountDesc" | "relevance";
 type LibraryResult = {
   article: Article;
@@ -77,26 +81,37 @@ type LibraryResult = {
   score: number;
   snippet: string;
 };
+type DraftEditorState = {
+  title: string;
+  body: string;
+  notes: string;
+  publishStatus: PublishStatus;
+  plannedPublishAt: string;
+};
 
 const SUCCESS_NOTICE_DURATION_MS = 3000;
 const ALL_CATEGORIES = "全部";
 const ALL_SOURCES = "all" as const;
+const ALL_PROJECTS = "全部";
 const SEARCH_LOCALE = "zh-Hans-CN";
 
 export function Workbench({
   initialArticles,
+  initialDrafts = [],
   templates,
   initialWritingBlueprints = [],
   initialWritingStructureRuns = [],
   initialThemeMode = DEFAULT_THEME_MODE,
 }: WorkbenchProps) {
   const [articles, setArticles] = useState(initialArticles);
+  const [localDrafts, setLocalDrafts] = useState(initialDrafts);
   const [selectedId, setSelectedId] = useState(initialArticles[0]?.id ?? "");
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("library");
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode() ?? initialThemeMode);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState(ALL_CATEGORIES);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>(ALL_SOURCES);
+  const [projectFilter, setProjectFilter] = useState<ProjectFilter | string>(ALL_PROJECTS);
   const [favoriteFilter, setFavoriteFilter] = useState<FavoriteFilter>("all");
   const [sortMode, setSortMode] = useState<SortMode>("updatedDesc");
   const [manageQuery, setManageQuery] = useState("");
@@ -109,8 +124,7 @@ export function Workbench({
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [readerDropdown, setReaderDropdown] = useState<ReaderDropdown>(null);
   const [libraryRailOpen, setLibraryRailOpen] = useState(true);
-  const [libraryDrawerOpen, setLibraryDrawerOpen] = useState(false);
-  const [editDraft, setEditDraft] = useState({ title: "", category: "", content: "" });
+  const [editDraft, setEditDraft] = useState({ title: "", category: "", sourceProject: "", content: "" });
   const editorRef = useRef<HTMLDivElement | null>(null);
   const [importFeedback, setImportFeedback] = useState<Notice | null>(null);
   const [writingBlueprints, setWritingBlueprints] = useState(initialWritingBlueprints);
@@ -121,7 +135,10 @@ export function Workbench({
   const [sourceReuseWarnings, setSourceReuseWarnings] = useState<SourceReuseWarning[]>([]);
   const [latestDraft, setLatestDraft] = useState<LocalDraft | null>(null);
   const [draftImageAssets, setDraftImageAssets] = useState<DraftImageAsset[]>([]);
-  const [notice, setNotice] = useState<Notice | null>({ type: "info", text: "本地知识库已就绪" });
+  const initialSelectedDraft = firstPendingDraftForChannel(initialDrafts, "wechat");
+  const [selectedDraftId, setSelectedDraftId] = useState(initialSelectedDraft?.id ?? "");
+  const [draftEditor, setDraftEditor] = useState<DraftEditorState>(() => draftToEditorState(initialSelectedDraft));
+  const [notice, setNotice] = useState<Notice | null>({ type: "info", text: "账号文章系统已就绪" });
   const [busy, setBusy] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query);
@@ -132,11 +149,12 @@ export function Workbench({
       buildLibraryResults(articles, {
         category: categoryFilter,
         favorite: favoriteFilter,
+        project: projectFilter,
         query: deferredQuery,
         sort: sortMode,
         source: sourceFilter,
       }),
-    [articles, categoryFilter, deferredQuery, favoriteFilter, sortMode, sourceFilter],
+    [articles, categoryFilter, deferredQuery, favoriteFilter, projectFilter, sortMode, sourceFilter],
   );
 
   const filteredArticles = useMemo(() => libraryResults.map((result) => result.article), [libraryResults]);
@@ -163,6 +181,17 @@ export function Workbench({
     return counts;
   }, [articles]);
 
+  const projectCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const article of articles) {
+      const project = articleSourceProject(article);
+      counts.set(project, (counts.get(project) ?? 0) + 1);
+    }
+    return counts;
+  }, [articles]);
+
+  const projectOptions = useMemo(() => Array.from(projectCounts.keys()).sort((left, right) => left.localeCompare(right, SEARCH_LOCALE)), [projectCounts]);
+
   const favoriteCount = useMemo(() => articles.filter(isArticleFavorite).length, [articles]);
 
   const filterCategoryOptions = useMemo(
@@ -175,6 +204,7 @@ export function Workbench({
       buildLibraryResults(articles, {
         category: manageCategoryFilter,
         favorite: "all",
+        project: ALL_PROJECTS,
         query: deferredManageQuery,
         sort: "updatedDesc",
         source: ALL_SOURCES,
@@ -186,6 +216,7 @@ export function Workbench({
     query.trim(),
     categoryFilter !== ALL_CATEGORIES,
     sourceFilter !== ALL_SOURCES,
+    projectFilter !== ALL_PROJECTS,
     favoriteFilter !== "all",
   ].filter(Boolean).length;
 
@@ -235,6 +266,23 @@ export function Workbench({
     [selectedBlueprintId, writingBlueprints],
   );
 
+  const activeContentChannel = activeWorkspace === "xiaohongshu" ? "xiaohongshu" : "wechat";
+  const isContentWorkspace = activeWorkspace !== "library";
+
+  const channelDrafts = useMemo(
+    () => localDrafts.filter((draft) => draftChannel(draft) === activeContentChannel).sort(compareDraftQueue),
+    [activeContentChannel, localDrafts],
+  );
+
+  const pendingChannelDrafts = useMemo(() => channelDrafts.filter(isPendingDraft), [channelDrafts]);
+
+  const channelStats = useMemo(() => buildDraftStats(channelDrafts), [channelDrafts]);
+
+  const selectedLocalDraft = useMemo(
+    () => pendingChannelDrafts.find((draft) => draft.id === selectedDraftId) ?? pendingChannelDrafts[0] ?? null,
+    [pendingChannelDrafts, selectedDraftId],
+  );
+
   useEffect(() => {
     if (notice?.type !== "ok") {
       return;
@@ -260,21 +308,20 @@ export function Workbench({
   }, [importFeedback]);
 
   useEffect(() => {
-    if (!activeModal && !libraryDrawerOpen && !readerDropdown) {
+    if (!activeModal && !readerDropdown) {
       return;
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setActiveModal(null);
-        setLibraryDrawerOpen(false);
         setReaderDropdown(null);
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeModal, libraryDrawerOpen, readerDropdown]);
+  }, [activeModal, readerDropdown]);
 
   function updateQuery(value: string) {
     setQuery(value);
@@ -288,6 +335,7 @@ export function Workbench({
     setQuery("");
     setCategoryFilter(ALL_CATEGORIES);
     setSourceFilter(ALL_SOURCES);
+    setProjectFilter(ALL_PROJECTS);
     setFavoriteFilter("all");
     setSortMode("updatedDesc");
   }
@@ -300,6 +348,7 @@ export function Workbench({
     const payload = {
       title: String(form.get("title") ?? ""),
       sourceName: String(form.get("sourceName") ?? ""),
+      sourceProject: String(form.get("sourceProject") ?? ""),
       sourceType: "manual",
       originalUrl: String(form.get("originalUrl") ?? ""),
       author: String(form.get("author") ?? ""),
@@ -321,14 +370,14 @@ export function Workbench({
     const data = await response.json();
     setBusy(null);
     if (!response.ok) {
-      const text = data.error ?? "保存到本地库失败";
+      const text = data.error ?? "保存到引用素材库失败";
       setNotice({ type: "error", text: `保存失败：${text}` });
       setImportFeedback({ type: "error", text });
       return;
     }
     setArticles((current) => upsertArticle(current, data.article));
     setSelectedId(data.article.id);
-    setNotice({ type: "ok", text: `已保存到本地库：${data.article.title}` });
+    setNotice({ type: "ok", text: `已保存到引用素材库：${data.article.title}` });
     setImportFeedback(null);
     setActiveModal(null);
     formElement.reset();
@@ -343,7 +392,10 @@ export function Workbench({
     const response = await fetch("/api/library/import/url", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: String(form.get("url") ?? "") }),
+      body: JSON.stringify({
+        url: String(form.get("url") ?? ""),
+        sourceProject: String(form.get("sourceProject") ?? ""),
+      }),
     });
     const data = await response.json();
     setBusy(null);
@@ -359,7 +411,7 @@ export function Workbench({
       setParseRuns((current) => [data.parseRun, ...current]);
     }
     setSelectedId(data.article.id);
-    setNotice({ type: "ok", text: `已保存到本地库：${data.article.title}` });
+    setNotice({ type: "ok", text: `已保存到引用素材库：${data.article.title}` });
     setImportFeedback(null);
     setActiveModal(null);
     formElement.reset();
@@ -373,6 +425,7 @@ export function Workbench({
     setEditDraft({
       title: article.title,
       category: articleCategory(article),
+      sourceProject: articleSourceProject(article),
       content: editableHtmlFromArticle(article),
     });
     setActiveModal("edit");
@@ -409,6 +462,7 @@ export function Workbench({
       body: JSON.stringify({
         title: editDraft.title,
         category: editDraft.category,
+        sourceProject: editDraft.sourceProject,
         contentHtml,
       }),
     });
@@ -432,7 +486,7 @@ export function Workbench({
     });
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data.error ?? "文章更新失败");
+      throw new Error(data.error ?? "引用素材更新失败");
     }
     setArticles((current) => upsertArticle(current, data.article));
     return data.article as Article;
@@ -446,6 +500,22 @@ export function Workbench({
       setNotice({ type: "ok", text: `已更新分类：${nextCategory}` });
     } catch (error) {
       setNotice({ type: "error", text: error instanceof Error ? error.message : "分类保存失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleArticleMetaSave(article: Article, input: { category: string; sourceProject: string }) {
+    const nextCategory = normalizeArticleCategory(input.category);
+    setBusy(`category-${article.id}`);
+    try {
+      await patchArticle(article.id, {
+        category: nextCategory,
+        sourceProject: input.sourceProject.trim() || articleSourceProject(article),
+      });
+      setNotice({ type: "ok", text: `已更新引用信息：${nextCategory}` });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "引用信息保存失败" });
     } finally {
       setBusy(null);
     }
@@ -483,7 +553,7 @@ export function Workbench({
       const response = await fetch(`/api/library/articles/${article.id}`, { method: "DELETE" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data.error ?? "文章删除失败");
+        throw new Error(data.error ?? "引用素材删除失败");
       }
       setArticles((current) => {
         const next = current.filter((item) => item.id !== article.id);
@@ -496,9 +566,9 @@ export function Workbench({
       setAgentRuns((current) => current.filter((run) => run.articleId !== article.id));
       setStructureRuns((current) => current.filter((run) => run.articleId !== article.id));
       setPendingDeleteId(null);
-      setNotice({ type: "ok", text: `已删除文章：${article.title}` });
+      setNotice({ type: "ok", text: `已删除引用素材：${article.title}` });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "文章删除失败" });
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "引用素材删除失败" });
     } finally {
       setBusy(null);
     }
@@ -513,7 +583,7 @@ export function Workbench({
       setArticles((current) =>
         current.map((article) => updatedArticles.find((updated) => updated.id === article.id) ?? article),
       );
-      setNotice({ type: "ok", text: "已完成全部文章智能分类" });
+      setNotice({ type: "ok", text: "已完成全部外部素材智能分类" });
     } catch (error) {
       setNotice({ type: "error", text: error instanceof Error ? error.message : "智能分类失败" });
     } finally {
@@ -581,7 +651,7 @@ export function Workbench({
       return;
     }
     setBusy("writing-structure");
-    setNotice({ type: "info", text: "正在拆解当前文章的写作结构" });
+    setNotice({ type: "info", text: "正在拆解当前素材的写作结构" });
     const response = await fetch(`/api/library/articles/${selectedArticle.id}/structure`, {
       method: "POST",
     });
@@ -600,11 +670,11 @@ export function Workbench({
 
   async function handleWritingBlueprint() {
     if (referenceArticleIds.length === 0) {
-      setNotice({ type: "error", text: "请至少选择一篇参考文章" });
+      setNotice({ type: "error", text: "请至少选择一篇参考素材" });
       return;
     }
     setBusy("writing-blueprint");
-    setNotice({ type: "info", text: "正在聚合参考文章的写作结构蓝图" });
+    setNotice({ type: "info", text: "正在聚合参考素材的写作结构蓝图" });
     const response = await fetch("/api/writing/blueprints", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -625,11 +695,11 @@ export function Workbench({
   async function handleOriginalDraft(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (referenceArticleIds.length === 0) {
-      setNotice({ type: "error", text: "请至少选择一篇参考文章" });
+      setNotice({ type: "error", text: "请至少选择一篇参考素材" });
       return;
     }
     setBusy("writing-draft");
-    setNotice({ type: "info", text: "正在根据选题生成原创文章" });
+    setNotice({ type: "info", text: "正在根据选题生成本地创作文章" });
     const response = await fetch("/api/writing/drafts", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -637,6 +707,7 @@ export function Workbench({
         topic: writingTopic,
         referenceArticleIds,
         blueprintId: selectedBlueprintId || undefined,
+        channel: activeContentChannel,
       }),
     });
     const data = await response.json();
@@ -646,6 +717,10 @@ export function Workbench({
       return;
     }
     setLatestDraft(data.draft);
+    setLocalDrafts((current) => upsertDraft(current, data.draft));
+    if (draftChannel(data.draft) === activeContentChannel) {
+      selectDraftForEditing(data.draft);
+    }
     applyStructureRuns(data.structureRuns ?? []);
     setDraftImageAssets([]);
     setSourceReuseWarnings(data.warnings ?? []);
@@ -674,6 +749,10 @@ export function Workbench({
       return;
     }
     setLatestDraft(data.draft);
+    setLocalDrafts((current) => upsertDraft(current, data.draft));
+    if (draftChannel(data.draft) === activeContentChannel) {
+      selectDraftForEditing(data.draft);
+    }
     setDraftImageAssets(data.imageAssets ?? []);
     setSourceReuseWarnings([]);
     const failedCount = (data.imageAssets ?? []).filter((asset: DraftImageAsset) => asset.status === "failed").length;
@@ -683,7 +762,133 @@ export function Workbench({
     });
   }
 
-  const workspaceKicker = activeWorkspace === "library" ? "TECH LIBRARY" : "WECHAT STUDIO";
+  async function patchLocalDraft(draftId: string, payload: Partial<LocalDraft>): Promise<LocalDraft> {
+    const response = await fetch(`/api/content/drafts/${draftId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error ?? "本地文章更新失败");
+    }
+    setLocalDrafts((current) => upsertDraft(current, data.draft));
+    return data.draft as LocalDraft;
+  }
+
+  function selectDraftForEditing(draft: LocalDraft | null) {
+    setSelectedDraftId(draft?.id ?? "");
+    setDraftEditor(draftToEditorState(draft));
+  }
+
+  function handleDraftSelect(draftId: string) {
+    const draft = pendingChannelDrafts.find((item) => item.id === draftId) ?? null;
+    selectDraftForEditing(draft);
+  }
+
+  async function handleDraftStatusChange(draft: LocalDraft, publishStatus: PublishStatus) {
+    setBusy(`draft-status-${draft.id}`);
+    try {
+      const payload: Partial<LocalDraft> = {
+        publishStatus,
+        publishedAt: publishStatus === "published" ? new Date().toISOString() : "",
+      };
+      const updated = await patchLocalDraft(draft.id, payload);
+      if (selectedDraftId === draft.id) {
+        if (publishStatus === "published" || publishStatus === "archived") {
+          const nextDraft = channelDrafts.find((item) => item.id !== draft.id && draftChannel(item) === draftChannel(draft) && isPendingDraft(item)) ?? null;
+          selectDraftForEditing(nextDraft);
+        } else {
+          selectDraftForEditing(updated);
+        }
+      }
+      setNotice({ type: "ok", text: publishStatus === "published" ? `已标记发布：${draft.title}` : `已更新本地文章状态：${publishStatusLabel(publishStatus)}` });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "本地文章状态更新失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleDraftReorder(draft: LocalDraft, direction: -1 | 1) {
+    const index = channelDrafts.findIndex((item) => item.id === draft.id);
+    const neighbor = channelDrafts[index + direction];
+    if (!neighbor) {
+      return;
+    }
+    setBusy(`draft-order-${draft.id}`);
+    try {
+      const draftOrder = draft.queueOrder ?? index + 1;
+      const neighborOrder = neighbor.queueOrder ?? index + direction + 1;
+      await Promise.all([
+        patchLocalDraft(draft.id, { queueOrder: neighborOrder }),
+        patchLocalDraft(neighbor.id, { queueOrder: draftOrder }),
+      ]);
+      setNotice({ type: "ok", text: "发布顺序已调整" });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "顺序调整失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleCreateBlankDraft() {
+    setBusy("draft-create");
+    try {
+      const response = await fetch("/api/content/drafts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: activeContentChannel === "wechat" ? "未命名公众号草稿" : "未命名小红书笔记",
+          body: "<p>在这里整理正文。</p>",
+          contentChannel: activeContentChannel,
+          publishStatus: "draft",
+          sourceArticleIds: [],
+          exportFormat: "html",
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error ?? "新建本地文章失败");
+      }
+      setLocalDrafts((current) => upsertDraft(current, data.draft));
+      selectDraftForEditing(data.draft);
+      setNotice({ type: "ok", text: "已新建空白本地文章" });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "新建本地文章失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleDraftEditorSave() {
+    if (!selectedLocalDraft) {
+      return;
+    }
+    if (!draftEditor.title.trim() || !stripPreviewHtml(draftEditor.body).trim()) {
+      setNotice({ type: "error", text: "标题和正文不能为空" });
+      return;
+    }
+    setBusy(`draft-edit-${selectedLocalDraft.id}`);
+    try {
+      const updated = await patchLocalDraft(selectedLocalDraft.id, {
+        title: draftEditor.title,
+        body: draftEditor.body,
+        notes: draftEditor.notes,
+        publishStatus: draftEditor.publishStatus,
+        plannedPublishAt: draftEditor.plannedPublishAt,
+      });
+      selectDraftForEditing(updated);
+      setNotice({ type: "ok", text: "草稿正文已保存" });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "草稿保存失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const workspaceKicker =
+    activeWorkspace === "library" ? "外部引用素材" : localArticleCollectionLabel(activeContentChannel);
   const nextThemeMode = themeMode === "dark" ? "light" : "dark";
   const isLibraryEmptyState = activeWorkspace === "library" && !selectedArticle;
 
@@ -698,9 +903,14 @@ export function Workbench({
   function handleArticleSelectFromLibrary(articleId: string) {
     setSelectedId(articleId);
     setPendingDeleteId(null);
-    if (!libraryRailOpen) {
-      setLibraryDrawerOpen(false);
-    }
+  }
+
+  function openContentWorkspace(workspace: Exclude<Workspace, "library">) {
+    const channel = workspace === "xiaohongshu" ? "xiaohongshu" : "wechat";
+    setActiveWorkspace(workspace);
+    setActiveModal(null);
+    setReaderDropdown(null);
+    selectDraftForEditing(firstPendingDraftForChannel(localDrafts, channel));
   }
 
   return (
@@ -711,8 +921,10 @@ export function Workbench({
             <Database className="h-4 w-4" aria-hidden="true" />
           </div>
           <div>
-            <div className="brand-title">wechat-oa</div>
-            <div className="brand-meta">{articles.length} 篇技术文章 · 本地编辑台</div>
+            <div className="brand-title">账号文章系统</div>
+            <div className="brand-meta">
+              {articles.length} 篇外部引用素材 · {localDrafts.length} 篇本地创作文章
+            </div>
           </div>
         </div>
 
@@ -723,24 +935,29 @@ export function Workbench({
               onClick={() => {
                 setActiveWorkspace("library");
                 setActiveModal(null);
-                setLibraryDrawerOpen(false);
                 setReaderDropdown(null);
               }}
               className={workspaceButtonClassName(activeWorkspace === "library")}
             >
-              技术文章库
+              外部引用素材
             </button>
             <button
               type="button"
               onClick={() => {
-                setActiveWorkspace("wechat");
-                setActiveModal(null);
-                setLibraryDrawerOpen(false);
-                setReaderDropdown(null);
+                openContentWorkspace("wechat");
               }}
               className={workspaceButtonClassName(activeWorkspace === "wechat")}
             >
-              微信公众号
+              公众号本地文章
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                openContentWorkspace("xiaohongshu");
+              }}
+              className={workspaceButtonClassName(activeWorkspace === "xiaohongshu")}
+            >
+              小红书本地文章
             </button>
           </nav>
           <button
@@ -759,11 +976,11 @@ export function Workbench({
       </header>
 
       <div
-        className={`workspace-frame ${activeWorkspace === "wechat" ? "workspace-frame-wechat" : "workspace-frame-reading"} ${
-          libraryRailOpen ? "" : "workspace-frame-rail-collapsed"
+        className={`workspace-frame ${isContentWorkspace ? "workspace-frame-wechat" : "workspace-frame-reading"} ${
+          activeWorkspace === "library" && !libraryRailOpen ? "workspace-frame-rail-collapsed" : ""
         }`}
       >
-        {libraryRailOpen ? (
+        {activeWorkspace === "library" && libraryRailOpen ? (
           <ArticleLibraryPanel
             articles={articles}
             busy={busy}
@@ -771,46 +988,25 @@ export function Workbench({
             onArticleSelect={handleArticleSelectFromLibrary}
             onClose={() => {
               setLibraryRailOpen(false);
-              setLibraryDrawerOpen(false);
             }}
             onFavoriteToggle={handleFavoriteToggle}
             query={query}
             selectedArticleId={visibleSelectedId}
             sortMode={sortMode}
             updateQuery={updateQuery}
-            variant="rail"
           />
         ) : null}
-        {!libraryRailOpen ? (
+        {activeWorkspace === "library" && !libraryRailOpen ? (
           <button
             type="button"
             className="library-rail-handle"
-            aria-label="从左侧展开文章栏"
-            aria-expanded={libraryDrawerOpen}
-            onClick={() => setLibraryDrawerOpen(true)}
+            aria-label="从左侧展开素材栏"
+            aria-expanded={libraryRailOpen}
+            onClick={() => setLibraryRailOpen(true)}
           >
             <PanelLeftOpen className="h-4 w-4" />
-            文章列表
+            素材列表
           </button>
-        ) : null}
-        {!libraryRailOpen && libraryDrawerOpen ? (
-          <div className="library-drawer-backdrop" onClick={() => setLibraryDrawerOpen(false)}>
-            <div className="library-drawer-shell" onClick={(event) => event.stopPropagation()}>
-              <ArticleLibraryPanel
-                articles={articles}
-                busy={busy}
-                libraryResults={libraryResults}
-                onArticleSelect={handleArticleSelectFromLibrary}
-                onClose={() => setLibraryDrawerOpen(false)}
-                onFavoriteToggle={handleFavoriteToggle}
-                query={query}
-                selectedArticleId={visibleSelectedId}
-                sortMode={sortMode}
-                updateQuery={updateQuery}
-                variant="drawer"
-              />
-            </div>
-          </div>
         ) : null}
 
         <section className="reader-stage">
@@ -818,26 +1014,27 @@ export function Workbench({
             <div className={`reader-heading ${isLibraryEmptyState ? "reader-heading-empty" : ""}`}>
               <div className="kicker">{workspaceKicker}</div>
               <h1 className={`reader-title ${isLibraryEmptyState ? "reader-title-empty" : ""}`}>
-                {activeWorkspace === "wechat" ? "微信公众号生成" : selectedArticle?.title ?? "选择文章"}
+                {isContentWorkspace ? channelPageTitle(activeContentChannel) : selectedArticle?.title ?? "选择引用素材"}
               </h1>
             </div>
             <div className="reader-toolbar">
-              <button
-                type="button"
-                className="tool-button reader-rail-toggle"
-                aria-expanded={libraryRailOpen || libraryDrawerOpen}
-                onClick={() => {
-                  if (libraryRailOpen) {
-                    setLibraryRailOpen(false);
-                    setLibraryDrawerOpen(false);
-                    return;
-                  }
-                  setLibraryDrawerOpen((current) => !current);
-                }}
-              >
-                {libraryRailOpen || libraryDrawerOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
-                {libraryRailOpen || libraryDrawerOpen ? "收起文章栏" : "展开文章栏"}
-              </button>
+              {activeWorkspace === "library" ? (
+                <button
+                  type="button"
+                  className="tool-button reader-rail-toggle"
+                  aria-expanded={libraryRailOpen}
+                  onClick={() => {
+                    if (libraryRailOpen) {
+                      setLibraryRailOpen(false);
+                      return;
+                    }
+                    setLibraryRailOpen(true);
+                  }}
+                >
+                  {libraryRailOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+                  {libraryRailOpen ? "收起素材栏" : "展开素材栏"}
+                </button>
+              ) : null}
               {notice ? <StatusBadge notice={notice} /> : null}
               {activeWorkspace === "library" ? (
                 <>
@@ -853,11 +1050,11 @@ export function Workbench({
                       {activeFilterCount > 0 ? `筛选（${activeFilterCount}）` : "筛选"}
                     </button>
                     {readerDropdown === "filters" ? (
-                      <div id="reader-filter-menu" className="reader-filter-popover" aria-label="文章筛选">
+                      <div id="reader-filter-menu" className="reader-filter-popover" aria-label="引用素材筛选">
                         <button
                           type="button"
                           className={`reader-favorite-filter ${favoriteFilter === "favorites" ? "reader-favorite-filter-active" : ""}`}
-                          aria-label={favoriteFilter === "favorites" ? "显示全部文章" : "只看特别收藏"}
+                          aria-label={favoriteFilter === "favorites" ? "显示全部引用素材" : "只看特别收藏"}
                           onClick={() => setFavoriteFilter((current) => (current === "favorites" ? "all" : "favorites"))}
                         >
                           <Star className="h-4 w-4" />
@@ -881,6 +1078,17 @@ export function Workbench({
                             <option value="wechat">公众号（{sourceCounts.get("wechat") ?? 0}）</option>
                             <option value="web">网页（{sourceCounts.get("web") ?? 0}）</option>
                             <option value="manual">手动（{sourceCounts.get("manual") ?? 0}）</option>
+                          </select>
+                        </label>
+                        <label className="reader-filter-control">
+                          <span>项目来源</span>
+                          <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="field">
+                            <option value={ALL_PROJECTS}>全部项目（{articles.length}）</option>
+                            {projectOptions.map((project) => (
+                              <option key={project} value={project}>
+                                {project}（{projectCounts.get(project) ?? 0}）
+                              </option>
+                            ))}
                           </select>
                         </label>
                         <label className="reader-filter-control">
@@ -908,7 +1116,7 @@ export function Workbench({
                     <button
                       type="button"
                       className="tool-button tool-button-primary"
-                      aria-label="文章操作"
+                      aria-label="素材操作"
                       aria-expanded={readerDropdown === "actions"}
                       aria-controls="reader-action-menu"
                       onClick={() => setReaderDropdown((current) => (current === "actions" ? null : "actions"))}
@@ -917,12 +1125,12 @@ export function Workbench({
                       操作
                     </button>
                     {readerDropdown === "actions" ? (
-                      <div id="reader-action-menu" className="reader-action-popover" aria-label="文章操作菜单">
+                      <div id="reader-action-menu" className="reader-action-popover" aria-label="素材操作菜单">
                         <button
                           type="button"
                           className={`reader-menu-action favorite-action ${selectedArticle && isArticleFavorite(selectedArticle) ? "favorite-action-active" : ""}`}
                           disabled={!selectedArticle || busy === `favorite-${selectedArticle?.id ?? ""}`}
-                          aria-label={selectedArticle && isArticleFavorite(selectedArticle) ? "取消特别收藏当前文章" : "特别收藏当前文章"}
+                          aria-label={selectedArticle && isArticleFavorite(selectedArticle) ? "取消特别收藏当前素材" : "特别收藏当前素材"}
                           onClick={() => {
                             if (selectedArticle) {
                               void handleFavoriteToggle(selectedArticle);
@@ -942,7 +1150,7 @@ export function Workbench({
                           }}
                         >
                           <Settings className="h-4 w-4" />
-                          管理文章
+                          管理引用素材
                         </button>
                         <button
                           type="button"
@@ -954,7 +1162,7 @@ export function Workbench({
                           }}
                         >
                           <Pencil className="h-4 w-4" />
-                          编辑正文
+                          编辑素材正文
                         </button>
                         <button
                           type="button"
@@ -977,7 +1185,7 @@ export function Workbench({
                           }}
                         >
                           <Upload className="h-4 w-4" />
-                          新增文章
+                          新增引用素材
                         </button>
                       </div>
                     ) : null}
@@ -987,182 +1195,153 @@ export function Workbench({
             </div>
           </header>
 
-          <div className={activeWorkspace === "wechat" ? "wechat-layout" : "reader-layout reader-layout-reading"}>
-            {activeWorkspace === "wechat" ? (
-              <section className="wechat-workspace" aria-label="微信公众号生成工作台">
-                <div className="panel wechat-generate-panel">
-                  <div className="panel-title">
-                    <FileText className="h-4 w-4 text-[var(--red)]" />
-                    公众号生成
-                  </div>
-                  <div className="wechat-source-card">
-                    <div className="kicker">当前素材</div>
-                    <div className="wechat-source-title">{selectedArticle?.title ?? "先在左侧选择一篇文章"}</div>
-                    {selectedArticle ? (
-                      <div className="tiny-meta">
-                        {selectedArticle.sourceName} · {articleCategory(selectedArticle)}
-                      </div>
-                    ) : (
-                      <p className="panel-copy">左侧文章列表只是素材选择，不再进入技术文章阅读页。</p>
-                    )}
-                  </div>
-                  <WeChatAgentOverview
-                    draftImageAssets={draftImageAssets}
-                    latestDraft={latestDraft}
-                    referenceCount={selectedReferenceArticles.length}
-                    selectedArticle={selectedArticle}
-                    selectedBlueprint={selectedBlueprint}
-                    selectedStructureRun={selectedStructureRun}
-                    structureAssetCount={referenceStructureRuns.length}
-                  />
-                  <WritingStructureAssetPanel
-                    busy={busy}
-                    isReference={Boolean(selectedArticle && referenceArticleSet.has(selectedArticle.id))}
-                    onAnalyze={handleWritingStructure}
-                    onReferenceToggle={() => selectedArticle && toggleReferenceArticle(selectedArticle.id)}
-                    selectedArticle={selectedArticle}
-                    structureRun={selectedStructureRun}
-                  />
-                  <form className="wechat-writing-form" onSubmit={handleOriginalDraft}>
-                    <label className="field-label" htmlFor="writing-topic">
-                      原创选题
-                    </label>
-                    <input
-                      id="writing-topic"
-                      className="field"
-                      value={writingTopic}
-                      onChange={(event) => setWritingTopic(event.target.value)}
-                      placeholder="例如：想转 Agent 工程师，先补齐哪些工程能力？"
-                    />
-                    <label className="field-label" htmlFor="writing-blueprint">
-                      写作蓝图
-                    </label>
-                    <select
-                      id="writing-blueprint"
-                      className="field"
-                      value={selectedBlueprintId}
-                      onChange={(event) => setSelectedBlueprintId(event.target.value)}
-                    >
-                      <option value="">默认结构</option>
-                      {writingBlueprints.map((blueprint) => (
-                        <option key={blueprint.id} value={blueprint.id}>
-                          {blueprint.name}
-                        </option>
-                      ))}
-                    </select>
-                    <WritingBlueprintPreview
-                      blueprint={selectedBlueprint}
-                      referenceCount={selectedReferenceArticles.length}
-                      structureAssetCount={referenceStructureRuns.length}
-                      onGenerate={handleWritingBlueprint}
-                      busy={busy}
-                    />
-                    <div className="metric-line">
-                      <span className="field-label">参考文章</span>
-                      <span className="tiny-meta">
-                        已选 {selectedReferenceArticles.length} 篇 · 可用结构资产 {referenceStructureRuns.length} 条
-                      </span>
+          <div className={isContentWorkspace ? "wechat-layout" : "reader-layout reader-layout-reading"}>
+            {isContentWorkspace ? (
+              <section className="wechat-workspace" aria-label={`${localArticleCollectionLabel(activeContentChannel)}工作台`}>
+                {activeWorkspace === "wechat" ? (
+                  <div className="panel wechat-generate-panel">
+                    <div className="panel-title">
+                      <FileText className="h-4 w-4 text-[var(--red)]" />
+                      公众号生成
                     </div>
-                    <div className="wechat-reference-list" aria-label="参考文章">
-                      {articles.map((article) => (
-                        <label key={article.id} className="wechat-reference-option">
-                          <input
-                            type="checkbox"
-                            checked={referenceArticleSet.has(article.id)}
-                            onChange={() => toggleReferenceArticle(article.id)}
-                          />
-                          <span>{article.title}</span>
-                        </label>
-                      ))}
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={busy === "writing-draft" || referenceArticleIds.length === 0 || !writingTopic.trim()}
-                      className="btn btn-primary"
-                    >
-                      {busy === "writing-draft" ? (
-                        <RefreshCw className="h-4 w-4 animate-spin" />
+                    <div className="wechat-source-card">
+                      <div className="kicker">当前引用素材</div>
+                      <div className="wechat-source-title">{selectedArticle?.title ?? "先在左侧选择一篇素材"}</div>
+                      {selectedArticle ? (
+                        <div className="tiny-meta">
+                          {selectedArticle.sourceName} · {articleCategory(selectedArticle)}
+                        </div>
                       ) : (
-                        <Sparkles className="h-4 w-4" />
+                        <p className="panel-copy">外部引用素材只作为生成参考，这里不展示素材阅读页。</p>
                       )}
-                      根据选题生成原创文章
-                    </button>
-                  </form>
-                  <button
-                    type="button"
-                    disabled={!selectedArticle || busy === "professional-draft"}
-                    onClick={handleProfessionalDraft}
-                    className="btn btn-redline wechat-generate-button"
-                  >
-                    {busy === "professional-draft" ? (
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <FileText className="h-4 w-4" />
-                    )}
-                    生成专业长文 + 配图
-                  </button>
-                </div>
-
-                <div className="wechat-output-grid">
-                  <section className="panel">
-                    <div className="panel-title">
-                      <FileText className="h-4 w-4 text-[var(--green)]" />
-                      最新草稿
                     </div>
-                    {latestDraft ? (
-                      <div className="draft-card">
-                        <div className="draft-title">{latestDraft.title}</div>
-                        <p className="mt-2 tiny-meta">
-                          {draftImageAssets.filter((asset) => asset.status === "generated").length} 张已生成，
-                          {draftImageAssets.filter((asset) => asset.status === "failed").length} 张待处理
-                        </p>
-                        <p className="wechat-draft-preview">{latestDraft.body.slice(0, 220)}</p>
-                        {sourceReuseWarnings.length > 0 ? (
-                          <div className="mt-3 warning-list">
-                            <div className="tiny-meta text-[var(--amber)]">疑似长句复用，需要人工改写</div>
-                            {sourceReuseWarnings.map((warning) => (
-                              <p key={`${warning.sourceArticleId}-${warning.matchedText}`} className="tiny-meta">
-                                {warning.sourceTitle}：{warning.matchedText.slice(0, 80)}
-                              </p>
-                            ))}
-                          </div>
-                        ) : null}
+                    <WeChatAgentOverview
+                      draftImageAssets={draftImageAssets}
+                      latestDraft={latestDraft}
+                      referenceCount={selectedReferenceArticles.length}
+                      selectedArticle={selectedArticle}
+                      selectedBlueprint={selectedBlueprint}
+                      selectedStructureRun={selectedStructureRun}
+                      structureAssetCount={referenceStructureRuns.length}
+                    />
+                    <WritingStructureAssetPanel
+                      busy={busy}
+                      isReference={Boolean(selectedArticle && referenceArticleSet.has(selectedArticle.id))}
+                      onAnalyze={handleWritingStructure}
+                      onReferenceToggle={() => selectedArticle && toggleReferenceArticle(selectedArticle.id)}
+                      selectedArticle={selectedArticle}
+                      structureRun={selectedStructureRun}
+                    />
+                    <form className="wechat-writing-form" onSubmit={handleOriginalDraft}>
+                      <label className="field-label" htmlFor="writing-topic">
+                        原创选题
+                      </label>
+                      <input
+                        id="writing-topic"
+                        className="field"
+                        value={writingTopic}
+                        onChange={(event) => setWritingTopic(event.target.value)}
+                        placeholder="例如：想转 Agent 工程师，先补齐哪些工程能力？"
+                      />
+                      <label className="field-label" htmlFor="writing-blueprint">
+                        写作蓝图
+                      </label>
+                      <select
+                        id="writing-blueprint"
+                        className="field"
+                        value={selectedBlueprintId}
+                        onChange={(event) => setSelectedBlueprintId(event.target.value)}
+                      >
+                        <option value="">默认结构</option>
+                        {writingBlueprints.map((blueprint) => (
+                          <option key={blueprint.id} value={blueprint.id}>
+                            {blueprint.name}
+                          </option>
+                        ))}
+                      </select>
+                      <WritingBlueprintPreview
+                        blueprint={selectedBlueprint}
+                        referenceCount={selectedReferenceArticles.length}
+                        structureAssetCount={referenceStructureRuns.length}
+                        onGenerate={handleWritingBlueprint}
+                        busy={busy}
+                      />
+                      <div className="metric-line">
+                        <span className="field-label">参考素材</span>
+                        <span className="tiny-meta">
+                          已选 {selectedReferenceArticles.length} 篇 · 可用结构资产 {referenceStructureRuns.length} 条
+                        </span>
                       </div>
-                    ) : (
-                      <p className="panel-copy">生成后会在这里看到公众号草稿，而不是技术文章正文。</p>
-                    )}
-                  </section>
-
-                  <section className="panel">
-                    <div className="panel-title">
-                      <Upload className="h-4 w-4 text-[var(--amber)]" />
-                      配图结果
-                    </div>
-                    {draftImageAssets.length > 0 ? (
-                      <div className="wechat-asset-grid">
-                        {draftImageAssets.map((asset) => (
-                          <div key={asset.id} className="draft-card">
-                            <div className="metric-line">
-                              <span className="font-semibold">{asset.role === "hero" ? "封面图" : "解释图"}</span>
-                              <span className={asset.status === "generated" ? "text-[var(--green)]" : "text-[var(--red)]"}>
-                                {asset.status === "generated" ? "已生成" : "失败"}
-                              </span>
-                            </div>
-                            {asset.publicPath ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={asset.publicPath} alt={asset.alt} className="mt-2 aspect-[3/2] w-full rounded-sm object-cover" />
-                            ) : (
-                              <p className="mt-2 tiny-meta text-[var(--red)]">{asset.error}</p>
-                            )}
-                            <p className="mt-2 tiny-meta">{asset.caption}</p>
-                          </div>
+                      <div className="wechat-reference-list" aria-label="参考素材">
+                        {articles.map((article) => (
+                          <label key={article.id} className="wechat-reference-option">
+                            <input
+                              type="checkbox"
+                              checked={referenceArticleSet.has(article.id)}
+                              onChange={() => toggleReferenceArticle(article.id)}
+                            />
+                            <span>{article.title}</span>
+                          </label>
                         ))}
                       </div>
-                    ) : (
-                      <p className="panel-copy">暂无配图结果</p>
-                    )}
-                  </section>
-                </div>
+                      <button
+                        type="submit"
+                        disabled={busy === "writing-draft" || referenceArticleIds.length === 0 || !writingTopic.trim()}
+                        className="btn btn-primary"
+                      >
+                        {busy === "writing-draft" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                        生成微信公众号原创稿
+                      </button>
+                    </form>
+                    <button
+                      type="button"
+                      disabled={!selectedArticle || busy === "professional-draft"}
+                      onClick={handleProfessionalDraft}
+                      className="btn btn-redline wechat-generate-button"
+                    >
+                      {busy === "professional-draft" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                      生成专业长文 + 配图
+                    </button>
+                    <section className="panel">
+                      <div className="panel-title">
+                        <FileText className="h-4 w-4 text-[var(--green)]" />
+                        最新草稿
+                      </div>
+                      {latestDraft ? (
+                        <div className="draft-card">
+                          <div className="draft-title">{latestDraft.title}</div>
+                          <p className="wechat-draft-preview">{stripPreviewHtml(latestDraft.body).slice(0, 220)}</p>
+                          {sourceReuseWarnings.length > 0 ? (
+                            <div className="mt-3 warning-list">
+                              <div className="tiny-meta text-[var(--amber)]">疑似长句复用，需要人工改写</div>
+                              {sourceReuseWarnings.map((warning) => (
+                                <p key={`${warning.sourceArticleId}-${warning.matchedText}`} className="tiny-meta">
+                                  {warning.sourceTitle}：{warning.matchedText.slice(0, 80)}
+                                </p>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="panel-copy">生成后会在这里看到公众号草稿。</p>
+                      )}
+                    </section>
+                  </div>
+                ) : null}
+                <ContentDraftWorkbench
+                  busy={busy}
+                  channel={activeContentChannel}
+                  draftEditor={draftEditor}
+                  drafts={pendingChannelDrafts}
+                  onCreateBlank={handleCreateBlankDraft}
+                  onEditorChange={(patch) => setDraftEditor((current) => ({ ...current, ...patch }))}
+                  onMove={handleDraftReorder}
+                  onSave={handleDraftEditorSave}
+                  onSelect={handleDraftSelect}
+                  onStatusChange={handleDraftStatusChange}
+                  selectedDraft={selectedLocalDraft}
+                  stats={channelStats}
+                />
               </section>
             ) : (
               <article className="reader-card">
@@ -1171,7 +1350,7 @@ export function Workbench({
                     <ReadableContent content={selectedArticle.contentHtml || selectedArticle.contentText} />
                   </div>
                 ) : (
-                  <div className="empty-reader">当前筛选没有选中文章</div>
+                  <div className="empty-reader">当前筛选没有选中引用素材</div>
                 )}
               </article>
             )}
@@ -1256,17 +1435,17 @@ export function Workbench({
       ) : null}
 
       {activeModal === "manage" ? (
-        <ModalShell title="文章管理" icon={<Settings className="h-5 w-5 text-[var(--blue)]" />} onClose={() => setActiveModal(null)} wide>
+        <ModalShell title="引用素材管理" icon={<Settings className="h-5 w-5 text-[var(--blue)]" />} onClose={() => setActiveModal(null)} wide>
           <section className="manage-panel">
             <div className="manage-summary">
               <div>
                 <div className="panel-title mb-1">后台管理</div>
-                <p className="panel-copy">集中新增、查看、编辑、分类和删除文章；分类可以手动改，也可以按标题、标签和正文智能建议。</p>
+                <p className="panel-copy">集中新增、查看、编辑、分类和删除外部引用素材；分类可以手动改，也可以按标题、标签和正文智能建议。</p>
               </div>
               <div className="manage-summary-actions">
                 <button type="button" className="btn btn-primary manage-bulk-button" onClick={() => setActiveModal("import")}>
                   <Upload className="h-4 w-4" />
-                  新增文章
+                  新增引用素材
                 </button>
                 <button type="button" className="btn btn-secondary manage-bulk-button" onClick={handleBulkSuggestCategories} disabled={busy === "category-bulk"}>
                   {busy === "category-bulk" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -1295,12 +1474,12 @@ export function Workbench({
                 <input
                   value={manageQuery}
                   onChange={(event) => setManageQuery(event.target.value)}
-                  placeholder="管理中搜索标题、来源、标签、正文"
+                  placeholder="管理中搜索素材标题、来源、标签、正文"
                   className="field field-with-icon"
                 />
               </label>
               <div className="management-result-count">
-                显示 {managedArticles.length} / {articles.length} 篇
+                显示 {managedArticles.length} / {articles.length} 篇外部素材
               </div>
             </div>
 
@@ -1309,18 +1488,21 @@ export function Workbench({
                 <form
                   key={`${article.id}-${articleCategory(article)}`}
                   className="article-management-row"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const form = new FormData(event.currentTarget);
-                    void handleCategorySave(article, String(form.get("category") ?? ""));
-                  }}
+	                  onSubmit={(event) => {
+	                    event.preventDefault();
+	                    const form = new FormData(event.currentTarget);
+	                    void handleArticleMetaSave(article, {
+	                      category: String(form.get("category") ?? ""),
+	                      sourceProject: String(form.get("sourceProject") ?? ""),
+	                    });
+	                  }}
                 >
                   <div className="management-title-block">
                     <div className="management-title">{article.title}</div>
                     <div className="tiny-meta">
-                      {article.sourceName} · {article.publishedAt || "未标日期"}
-                    </div>
-                  </div>
+	                      {article.sourceName} · {article.publishedAt || "未标日期"}
+	                    </div>
+	                  </div>
                   <button
                     type="button"
                     className={`btn btn-secondary management-action management-favorite-action ${
@@ -1332,8 +1514,9 @@ export function Workbench({
                     <Star className="h-4 w-4" />
                     <span>{isArticleFavorite(article) ? "已收藏" : "收藏"}</span>
                   </button>
-                  <input name="category" list="article-category-options" defaultValue={articleCategory(article)} className="field management-category-input" />
-                  <button type="button" className="btn btn-secondary management-action" onClick={() => void handleSuggestedCategorySave(article)}>
+	                  <input name="category" list="article-category-options" defaultValue={articleCategory(article)} className="field management-category-input" />
+	                  <input name="sourceProject" defaultValue={articleSourceProject(article)} className="field management-project-input" />
+	                  <button type="button" className="btn btn-secondary management-action" onClick={() => void handleSuggestedCategorySave(article)}>
                     <Sparkles className="h-4 w-4" />
                     <span>智能分类</span>
                   </button>
@@ -1358,7 +1541,7 @@ export function Workbench({
               ))}
               {managedArticles.length === 0 ? (
                 <div className="empty-list">
-                  <div className="empty-list-title">没有匹配文章</div>
+                  <div className="empty-list-title">没有匹配素材</div>
                   <p>调整管理搜索或分类条件。</p>
                 </div>
               ) : null}
@@ -1368,7 +1551,7 @@ export function Workbench({
       ) : null}
 
       {activeModal === "edit" ? (
-        <ModalShell title="编辑正文" icon={<Pencil className="h-5 w-5 text-[var(--green)]" />} onClose={() => setActiveModal(null)} wide>
+        <ModalShell title="编辑素材正文" icon={<Pencil className="h-5 w-5 text-[var(--green)]" />} onClose={() => setActiveModal(null)} wide>
           <form className="editor-form" onSubmit={handleArticleEdit}>
             <label className="field-label" htmlFor="article-edit-title">
               标题
@@ -1393,6 +1576,19 @@ export function Workbench({
               onChange={(event) => {
                 const category = event.currentTarget.value;
                 setEditDraft((current) => ({ ...current, category }));
+              }}
+              className={inputClassName}
+            />
+
+            <label className="field-label" htmlFor="article-edit-source-project">
+              项目来源
+            </label>
+            <input
+              id="article-edit-source-project"
+              value={editDraft.sourceProject}
+              onChange={(event) => {
+                const sourceProject = event.currentTarget.value;
+                setEditDraft((current) => ({ ...current, sourceProject }));
               }}
               className={inputClassName}
             />
@@ -1436,9 +1632,9 @@ export function Workbench({
       ) : null}
 
       {activeModal === "import" ? (
-        <ModalShell title="新增文章" icon={<Upload className="h-5 w-5 text-[var(--green)]" />} onClose={() => setActiveModal(null)}>
+        <ModalShell title="新增引用素材" icon={<Upload className="h-5 w-5 text-[var(--green)]" />} onClose={() => setActiveModal(null)}>
           <section className="add-article-panel">
-            <div className="import-mode-switch" aria-label="新增文章方式">
+            <div className="import-mode-switch" aria-label="新增引用素材方式">
               <button type="button" onClick={() => setImportMode("url")} className={importModeButtonClassName(importMode === "url")}>
                 链接导入
               </button>
@@ -1449,7 +1645,8 @@ export function Workbench({
 
             {importMode === "url" ? (
               <form className="grid gap-2" onSubmit={handleUrlImport}>
-                <input name="url" required placeholder="粘贴文章链接后解析" className={inputClassName} />
+                <input name="sourceProject" placeholder="项目来源，例如 Harness 专题 / Agent 转型资料" className={inputClassName} />
+                <input name="url" required placeholder="粘贴外部文章链接后解析" className={inputClassName} />
                 <button type="submit" className={primaryButtonClassName} disabled={busy === "url-import"}>
                   <RefreshCw className={`h-4 w-4 ${busy === "url-import" ? "animate-spin" : ""}`} />
                   链接解析
@@ -1459,7 +1656,8 @@ export function Workbench({
               <form className="grid gap-2" onSubmit={handleManualImport}>
                 <input name="title" required placeholder="标题" className={inputClassName} />
                 <input name="sourceName" required placeholder="来源名称" className={inputClassName} />
-                <input name="originalUrl" placeholder="文章链接" className={inputClassName} />
+                <input name="sourceProject" placeholder="项目来源，例如 Harness 专题 / AI Agent 竞品" className={inputClassName} />
+                <input name="originalUrl" placeholder="原文链接" className={inputClassName} />
                 <input name="category" list="article-category-options" placeholder="分类，例如 AI Agent / Infra / 期货" className={inputClassName} />
                 <div className="grid grid-cols-2 gap-2">
                   <input name="author" placeholder="作者" className={inputClassName} />
@@ -1469,17 +1667,200 @@ export function Workbench({
                 <textarea name="contentText" required placeholder="正文" rows={7} className={textareaClassName} />
                 <button type="submit" className={primaryButtonClassName} disabled={busy === "manual-import"}>
                   <Save className="h-4 w-4" />
-                  保存到本地库
+                  保存到引用素材库
                 </button>
               </form>
             )}
 
             {importFeedback ? <ImportFeedback notice={importFeedback} /> : null}
-            <p className="panel-copy mt-3">链接解析失败时，切到手动粘贴补全文字段后仍可保存到本地库。</p>
+            <p className="panel-copy mt-3">链接解析失败时，切到手动粘贴补全文字段后仍可保存到引用素材库。</p>
           </section>
         </ModalShell>
       ) : null}
     </main>
+  );
+}
+
+function ContentDraftWorkbench({
+  busy,
+  channel,
+  draftEditor,
+  drafts,
+  onCreateBlank,
+  onEditorChange,
+  onMove,
+  onSave,
+  onSelect,
+  onStatusChange,
+  selectedDraft,
+  stats,
+}: {
+  busy: string | null;
+  channel: ContentChannel;
+  draftEditor: DraftEditorState;
+  drafts: LocalDraft[];
+  onCreateBlank: () => void;
+  onEditorChange: (patch: Partial<DraftEditorState>) => void;
+  onMove: (draft: LocalDraft, direction: -1 | 1) => void | Promise<void>;
+  onSave: () => void | Promise<void>;
+  onSelect: (draftId: string) => void;
+  onStatusChange: (draft: LocalDraft, status: PublishStatus) => void | Promise<void>;
+  selectedDraft: LocalDraft | null;
+  stats: Record<PublishStatus, number>;
+}) {
+  const label = channelLabel(channel);
+  const selectedStatus = selectedDraft ? draftStatus(selectedDraft) : "draft";
+
+  return (
+    <section className="panel content-draft-workbench" aria-label={`${label}待提交草稿工作台`}>
+      <div className="content-draft-heading">
+        <div>
+          <div className="panel-title">
+            <FileText className="h-4 w-4 text-[var(--blue)]" />
+            {label}草稿工作台
+          </div>
+          <p className="panel-copy">
+            这里只显示待提交草稿：草稿 {stats.draft ?? 0} 篇 · 待发布 {stats.queued ?? 0} 篇。正文可以直接在右侧编辑保存。
+          </p>
+        </div>
+        <button type="button" className="btn btn-secondary content-create-button" disabled={busy === "draft-create"} onClick={onCreateBlank}>
+          {busy === "draft-create" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+          新建空白草稿
+        </button>
+      </div>
+
+      <div className="content-draft-shell">
+        <div className="content-draft-list" aria-label="待提交草稿文件">
+          {drafts.map((draft, index) => (
+            <article key={draft.id} className={`content-draft-item ${selectedDraft?.id === draft.id ? "content-draft-item-active" : ""}`}>
+              <div className="content-order-controls" aria-label="调整发布顺序">
+                <button type="button" className="content-order-button" disabled={index === 0 || busy === `draft-order-${draft.id}`} onClick={() => void onMove(draft, -1)}>
+                  ↑
+                </button>
+                <span>{draft.queueOrder ?? index + 1}</span>
+                <button
+                  type="button"
+                  className="content-order-button"
+                  disabled={index === drafts.length - 1 || busy === `draft-order-${draft.id}`}
+                  onClick={() => void onMove(draft, 1)}
+                >
+                  ↓
+                </button>
+              </div>
+              <button type="button" className="content-draft-item-main" aria-pressed={selectedDraft?.id === draft.id} onClick={() => onSelect(draft.id)}>
+                <span className="content-queue-title">{draft.title}</span>
+                <span className="content-queue-preview">{stripPreviewHtml(draft.body).slice(0, 160) || "暂无正文"}</span>
+                <span className="content-queue-meta">
+                  <span>{publishStatusLabel(draftStatus(draft))}</span>
+                  <span>{draft.plannedPublishAt ? `计划 ${formatDateTime(draft.plannedPublishAt)}` : "未排期"}</span>
+                </span>
+              </button>
+            </article>
+          ))}
+          {drafts.length === 0 ? (
+            <div className="empty-list">
+              <div className="empty-list-title">没有待提交草稿</div>
+              <p>已发布和归档文章会从这里隐藏；可以新建空白草稿继续整理。</p>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="content-draft-editor" aria-label="草稿正文编辑区">
+          {selectedDraft ? (
+            <>
+              <div className="content-draft-editor-top">
+                <label className="field-label" htmlFor="draft-editor-title">
+                  标题
+                </label>
+                <input
+                  id="draft-editor-title"
+                  className="field"
+                  value={draftEditor.title}
+                  onChange={(event) => onEditorChange({ title: event.target.value })}
+                />
+              </div>
+
+              <div className="content-draft-controls">
+                <label className="field-label" htmlFor="draft-editor-status">
+                  状态
+                </label>
+                <select
+                  id="draft-editor-status"
+                  className="field"
+                  value={draftEditor.publishStatus}
+                  disabled={busy === `draft-status-${selectedDraft.id}`}
+                  onChange={(event) => onEditorChange({ publishStatus: event.target.value as PublishStatus })}
+                >
+                  <option value="draft">草稿</option>
+                  <option value="queued">待发布</option>
+                </select>
+                <label className="field-label" htmlFor="draft-editor-plan">
+                  计划发布时间
+                </label>
+                <input
+                  id="draft-editor-plan"
+                  type="datetime-local"
+                  className="field"
+                  value={draftEditor.plannedPublishAt}
+                  onChange={(event) => onEditorChange({ plannedPublishAt: event.target.value })}
+                />
+              </div>
+
+              <label className="field-label" htmlFor="draft-editor-body">
+                正文
+              </label>
+              <textarea
+                id="draft-editor-body"
+                className="textarea content-draft-body-field"
+                value={draftEditor.body}
+                onChange={(event) => onEditorChange({ body: event.target.value })}
+              />
+
+              <label className="field-label" htmlFor="draft-editor-notes">
+                备注
+              </label>
+              <textarea
+                id="draft-editor-notes"
+                className="textarea content-draft-notes-field"
+                value={draftEditor.notes}
+                onChange={(event) => onEditorChange({ notes: event.target.value })}
+              />
+
+              <div className="content-draft-editor-actions">
+                <button type="button" className="btn btn-primary" disabled={busy === `draft-edit-${selectedDraft.id}`} onClick={() => void onSave()}>
+                  {busy === `draft-edit-${selectedDraft.id}` ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  保存草稿
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={busy === `draft-status-${selectedDraft.id}`}
+                  onClick={() => void onStatusChange(selectedDraft, "published")}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  标为已发布
+                </button>
+              </div>
+
+              <section className="content-draft-preview-panel" aria-label="正文预览">
+                <div className="metric-line">
+                  <span className="field-label">正文预览</span>
+                  <span className="tiny-meta">{publishStatusLabel(selectedStatus)} · {stripPreviewHtml(draftEditor.body).length} 字</span>
+                </div>
+                <div className="content-draft-readable">
+                  <ReadableContent content={draftEditor.body || "暂无正文"} />
+                </div>
+              </section>
+            </>
+          ) : (
+            <div className="empty-list">
+              <div className="empty-list-title">请选择一个草稿</div>
+              <p>左侧会列出所有待提交的{label}草稿，点开后可以编辑标题、正文和排期。</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1538,7 +1919,7 @@ function WeChatAgentOverview({
           icon={<Upload className="h-4 w-4" />}
           name="专业长文配图 Agent"
           status={draftImageAssets.length > 0 ? `${generatedImageCount} 张成功 · ${failedImageCount} 张待处理` : "可一键生成"}
-          copy="基于当前文章生成专业长文、封面图和解释图。"
+          copy="基于当前素材生成专业长文、封面图和解释图。"
           tone={draftImageAssets.length > 0 ? "ready" : "idle"}
         />
       </div>
@@ -1613,7 +1994,7 @@ function WritingStructureAssetPanel({
       ) : (
         <div className="structure-empty-state">
           <p className="panel-copy">
-            点“拆解当前文章结构”后，会在这里看到标题套路、开头钩子、技术骨架、可复用写法和不要学的表达。
+            点“拆解当前素材结构”后，会在这里看到标题套路、开头钩子、技术骨架、可复用写法和不要学的表达。
           </p>
         </div>
       )}
@@ -1621,11 +2002,11 @@ function WritingStructureAssetPanel({
       <div className="wechat-action-row">
         <button type="button" disabled={!selectedArticle || busy === "writing-structure"} onClick={onAnalyze} className="btn btn-secondary">
           {busy === "writing-structure" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
-          {structureRun ? "重新拆解当前文章结构" : "拆解当前文章结构"}
+          {structureRun ? "重新拆解当前素材结构" : "拆解当前素材结构"}
         </button>
         <button type="button" disabled={!selectedArticle} onClick={onReferenceToggle} className="btn btn-secondary">
           <CheckCircle2 className="h-4 w-4" />
-          {isReference ? "移出参考文章" : "加入参考文章"}
+          {isReference ? "移出参考素材" : "加入参考素材"}
         </button>
       </div>
       {structureRun ? <p className="tiny-meta">最近拆解：{formatStructureRunDate(structureRun)}</p> : null}
@@ -1688,11 +2069,11 @@ function WritingBlueprintPreview({
           </div>
         </div>
       ) : (
-        <p className="panel-copy">没有选择蓝图时会使用默认结构；也可以先用参考文章生成专属蓝图。</p>
+        <p className="panel-copy">没有选择蓝图时会使用默认结构；也可以先用参考素材生成专属蓝图。</p>
       )}
       <button type="button" disabled={referenceCount === 0 || busy === "writing-blueprint"} onClick={onGenerate} className="btn btn-secondary">
         {busy === "writing-blueprint" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
-        用所选文章生成结构蓝图
+        用所选素材生成结构蓝图
       </button>
     </section>
   );
@@ -1709,7 +2090,6 @@ function ArticleLibraryPanel({
   selectedArticleId,
   sortMode,
   updateQuery,
-  variant,
 }: {
   articles: Article[];
   busy: string | null;
@@ -1721,24 +2101,18 @@ function ArticleLibraryPanel({
   selectedArticleId: string;
   sortMode: SortMode;
   updateQuery: (value: string) => void;
-  variant: "drawer" | "rail";
 }) {
-  const isDrawer = variant === "drawer";
-
   return (
     <aside
-      aria-label="文章列表"
-      aria-modal={isDrawer ? true : undefined}
-      className={`library-rail library-rail-${variant}`}
-      role={isDrawer ? "dialog" : undefined}
+      className="library-rail"
     >
       <div className="rail-search">
         <div className="rail-search-row">
           <label className="field-wrap block rail-search-field">
             <Search className="field-icon" />
-            <input value={query} onChange={(event) => updateQuery(event.target.value)} placeholder="搜索标题、来源、标签、正文" className="field field-with-icon" />
+            <input value={query} onChange={(event) => updateQuery(event.target.value)} placeholder="搜索素材标题、来源、标签、正文" className="field field-with-icon" />
           </label>
-          <button type="button" className="rail-collapse-button" aria-label={isDrawer ? "关闭文章列表" : "收回左侧文章栏"} onClick={onClose}>
+          <button type="button" className="rail-collapse-button" aria-label="收回左侧素材栏" onClick={onClose}>
             <PanelLeftClose className="h-4 w-4" />
           </button>
         </div>
@@ -1750,7 +2124,7 @@ function ArticleLibraryPanel({
       </div>
 
       <div className="article-list-header">
-        <span>文章</span>
+        <span>外部引用素材</span>
         <span>{sortMode === "relevance" && query.trim() ? "按相关度" : "按时间"}</span>
       </div>
 
@@ -1760,7 +2134,7 @@ function ArticleLibraryPanel({
             key={article.id}
             className={`article-row ${article.id === selectedArticleId ? "article-row-active" : ""} ${isArticleFavorite(article) ? "article-row-starred" : ""}`}
           >
-            <button type="button" aria-label={`打开文章：${article.title}`} onClick={() => onArticleSelect(article.id)} className="article-row-main">
+            <button type="button" aria-label={`打开引用素材：${article.title}`} onClick={() => onArticleSelect(article.id)} className="article-row-main">
               <div className="article-row-top">
                 <span className="category-chip">{articleCategory(article)}</span>
                 <span className="tiny-meta">{formatArticleDate(article)}</span>
@@ -1768,7 +2142,7 @@ function ArticleLibraryPanel({
               <div className="article-row-title">{article.title}</div>
               <div className="article-row-meta">
                 <span className="truncate">
-                  {sourceTypeLabel(article.sourceType)} · {article.sourceName}
+                  {articleSourceProject(article)} · {sourceTypeLabel(article.sourceType)}
                 </span>
                 <span>{articleWordCount(article)} 字</span>
               </div>
@@ -1786,7 +2160,7 @@ function ArticleLibraryPanel({
         ))}
         {libraryResults.length === 0 ? (
           <div className="empty-list">
-            <div className="empty-list-title">没有匹配文章</div>
+            <div className="empty-list-title">没有匹配素材</div>
             <p>换一个关键词，或清除来源和分类条件。</p>
           </div>
         ) : null}
@@ -1811,9 +2185,9 @@ function ModalShell({
   const titleId =
     title === "AI 拆解"
       ? "modal-title-analysis"
-      : title === "编辑正文"
+      : title === "编辑素材正文"
         ? "modal-title-edit"
-        : title === "文章管理"
+        : title === "引用素材管理"
           ? "modal-title-manage"
           : "modal-title-import";
 
@@ -2054,7 +2428,7 @@ function escapeHtmlAttribute(value: string): string {
 
 function buildLibraryResults(
   articles: Article[],
-  filters: { category: string; favorite: FavoriteFilter; query: string; sort: SortMode; source: SourceFilter },
+  filters: { category: string; favorite: FavoriteFilter; project: string; query: string; sort: SortMode; source: SourceFilter },
 ): LibraryResult[] {
   const query = filters.query.trim().toLowerCase();
   const results: LibraryResult[] = [];
@@ -2065,6 +2439,9 @@ function buildLibraryResults(
       continue;
     }
     if (filters.source !== ALL_SOURCES && article.sourceType !== filters.source) {
+      continue;
+    }
+    if (filters.project !== ALL_PROJECTS && articleSourceProject(article) !== filters.project) {
       continue;
     }
     if (filters.favorite === "favorites" && !isArticleFavorite(article)) {
@@ -2090,6 +2467,7 @@ function getArticleSearchInfo(article: Article, query: string, category: string)
     { label: "收藏", score: 74, value: isArticleFavorite(article) ? "特别收藏 收藏 星标" : "" },
     { label: "标签", score: 70, value: article.tags.join(" ") },
     { label: "分类", score: 58, value: category },
+    { label: "项目", score: 52, value: articleSourceProject(article) },
     { label: "来源", score: 44, value: `${article.sourceName} ${article.sourceAccount} ${article.author}` },
     { label: "正文", score: 18, value: article.contentText || htmlTextContent(article.contentHtml) },
   ];
@@ -2168,8 +2546,123 @@ function formatArticleDate(article: Article): string {
   return article.publishedAt || article.updatedAt.slice(0, 10) || "未标日期";
 }
 
+function articleSourceProject(article: Article): string {
+  return article.sourceProject?.trim() || article.sourceName || "未分组引用素材";
+}
+
+function draftChannel(draft: LocalDraft): ContentChannel {
+  return draft.contentChannel === "xiaohongshu" ? "xiaohongshu" : "wechat";
+}
+
+function firstPendingDraftForChannel(drafts: LocalDraft[], channel: ContentChannel): LocalDraft | null {
+  return drafts.filter((draft) => draftChannel(draft) === channel && isPendingDraft(draft)).sort(compareDraftQueue)[0] ?? null;
+}
+
+function draftToEditorState(draft: LocalDraft | null | undefined): DraftEditorState {
+  return {
+    title: draft?.title ?? "",
+    body: draft?.body ?? "",
+    notes: draft?.notes ?? "",
+    publishStatus: draft && isPendingDraft(draft) ? draftStatus(draft) : "draft",
+    plannedPublishAt: toDateTimeLocalValue(draft?.plannedPublishAt),
+  };
+}
+
+function isPendingDraft(draft: LocalDraft): boolean {
+  const status = draftStatus(draft);
+  return status === "draft" || status === "queued";
+}
+
+function draftStatus(draft: LocalDraft): PublishStatus {
+  return draft.publishStatus === "queued" || draft.publishStatus === "published" || draft.publishStatus === "archived"
+    ? draft.publishStatus
+    : "draft";
+}
+
+function channelLabel(channel: ContentChannel): string {
+  return channel === "xiaohongshu" ? "小红书" : "微信公众号";
+}
+
+function channelPageTitle(channel: ContentChannel): string {
+  return localArticleCollectionLabel(channel);
+}
+
+function localArticleCollectionLabel(channel: ContentChannel): string {
+  return channel === "xiaohongshu" ? "本地小红书文章" : "本地公众号文章";
+}
+
+function publishStatusLabel(status: PublishStatus): string {
+  if (status === "queued") {
+    return "待发布";
+  }
+  if (status === "published") {
+    return "已发布";
+  }
+  if (status === "archived") {
+    return "归档";
+  }
+  return "草稿";
+}
+
+function buildDraftStats(drafts: LocalDraft[]): Record<PublishStatus, number> {
+  const stats: Record<PublishStatus, number> = {
+    draft: 0,
+    queued: 0,
+    published: 0,
+    archived: 0,
+  };
+  for (const draft of drafts) {
+    stats[draftStatus(draft)] += 1;
+  }
+  return stats;
+}
+
+function compareDraftQueue(left: LocalDraft, right: LocalDraft): number {
+  const statusOrder: Record<PublishStatus, number> = {
+    queued: 0,
+    draft: 1,
+    published: 2,
+    archived: 3,
+  };
+  return (
+    statusOrder[draftStatus(left)] - statusOrder[draftStatus(right)] ||
+    (left.queueOrder ?? 0) - (right.queueOrder ?? 0) ||
+    compareDateDesc(left.updatedAt, right.updatedAt)
+  );
+}
+
+function toDateTimeLocalValue(value: string | undefined): string {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value.slice(0, 16);
+  }
+  const offset = date.getTimezoneOffset();
+  const local = new Date(date.getTime() - offset * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function formatStructureRunDate(run: WritingStructureRun): string {
   return run.createdAt.slice(0, 10) || "刚刚";
+}
+
+function stripPreviewHtml(value: string): string {
+  return htmlTextContent(value).replace(/\s+/g, " ").trim();
 }
 
 function readStoredThemeMode(): ThemeMode | null {
@@ -2242,6 +2735,12 @@ function upsertArticle(current: Article[], article: Article): Article[] {
   return [article, ...current];
 }
 
+function upsertDraft(current: LocalDraft[], draft: LocalDraft): LocalDraft[] {
+  const existing = current.some((item) => item.id === draft.id);
+  const next = existing ? current.map((item) => (item.id === draft.id ? draft : item)) : [draft, ...current];
+  return next.sort(compareDraftQueue);
+}
+
 function upsertStructureRuns(current: WritingStructureRun[], runs: WritingStructureRun[]): WritingStructureRun[] {
   const byId = new Map(current.map((run) => [run.id, run]));
   for (const run of runs) {
@@ -2252,12 +2751,12 @@ function upsertStructureRuns(current: WritingStructureRun[], runs: WritingStruct
 
 function sourceTypeLabel(sourceType: Article["sourceType"]): string {
   if (sourceType === "wechat") {
-    return "公众号";
+    return "公众号链接";
   }
   if (sourceType === "manual") {
-    return "手动";
+    return "手动录入";
   }
-  return "网页";
+  return "网页链接";
 }
 
 function workspaceButtonClassName(active: boolean): string {

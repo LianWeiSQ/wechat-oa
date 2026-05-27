@@ -143,7 +143,7 @@ export function SettingsPage({ initialAiSettings, initialImageSettings, initialW
       <section className="settings-page-stack" aria-label="配置中心">
         <SettingsCard icon={<Settings className="h-5 w-5" />} title="模型配置">
           <form className="settings-form" onSubmit={handleSaveAiSettings}>
-            <input name="modelProvider" defaultValue={aiSettings.modelProvider ?? "crs"} placeholder="Provider，例如 crs" className={inputClassName} />
+            <input name="modelProvider" defaultValue={aiSettings.modelProvider ?? "OpenAI"} placeholder="Provider，例如 OpenAI" className={inputClassName} />
             <input name="baseUrl" defaultValue={aiSettings.baseUrl} placeholder="Base URL" className={inputClassName} />
             <input name="model" defaultValue={aiSettings.model} placeholder="模型名" className={inputClassName} />
             <div className="settings-two-col">
@@ -166,7 +166,7 @@ export function SettingsPage({ initialAiSettings, initialImageSettings, initialW
             </div>
             <input
               name="reviewModelProvider"
-              defaultValue={aiSettings.reviewModelProvider ?? aiSettings.modelProvider ?? "crs"}
+              defaultValue={aiSettings.reviewModelProvider ?? aiSettings.modelProvider ?? "OpenAI"}
               placeholder="审稿 Provider"
               className={inputClassName}
             />

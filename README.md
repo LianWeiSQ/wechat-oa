@@ -16,7 +16,29 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3001](http://localhost:3001) with your browser to see the result.
+
+The local model gateway is expected at `http://127.0.0.1:3000`, so the app dev server intentionally runs on `3001`.
+
+AI gateway settings are loaded from local environment variables such as `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, and `OPENAI_WIRE_API`. When these variables are present, the app does not read or write AI model settings through the SQL `settings` table.
+
+## Docker Deployment
+
+Build and run the app on port `3001`:
+
+```bash
+docker compose up --build
+```
+
+Then open [http://localhost:3001](http://localhost:3001).
+
+The compose setup reads local secrets from `.env.local`, persists SQLite data and generated images in the `wechat_oa_data` Docker volume, and exposes the app as `3001:3001`.
+
+When the model gateway runs on the host machine, the container uses the sub2api backend at `http://host.docker.internal:8080` for `OPENAI_BASE_URL` and `OPENAI_REVIEW_BASE_URL` by default. Override with:
+
+```bash
+OPENAI_BASE_URL_DOCKER=http://your-gateway:8080 docker compose up --build
+```
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

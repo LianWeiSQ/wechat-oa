@@ -15,6 +15,7 @@ create table if not exists articles (
   title text not null,
   source_type text not null default 'wechat' check (source_type in ('web', 'wechat', 'manual')),
   source_name text not null default '',
+  source_project text not null default '',
   source_account text not null default '',
   original_url text not null,
   author text not null default '',
@@ -68,6 +69,13 @@ create table if not exists drafts (
   title text not null,
   body text not null,
   source_analysis_ids jsonb not null default '[]'::jsonb,
+  source_article_ids jsonb not null default '[]'::jsonb,
+  content_channel text not null default 'wechat' check (content_channel in ('wechat', 'xiaohongshu')),
+  publish_status text not null default 'draft' check (publish_status in ('draft', 'queued', 'published', 'archived')),
+  planned_publish_at text not null default '',
+  published_at text not null default '',
+  queue_order integer not null default 0,
+  notes text not null default '',
   export_format text not null default 'markdown' check (export_format in ('markdown', 'html')),
   wechat_draft_status text not null default 'not_sent' check (wechat_draft_status in ('not_sent', 'sent', 'failed')),
   wechat_media_id text,
@@ -169,10 +177,12 @@ create table if not exists settings (
 create index if not exists idx_articles_workspace_updated_at on articles (workspace_id, updated_at desc);
 create index if not exists idx_articles_workspace_category on articles (workspace_id, category, updated_at desc);
 create index if not exists idx_articles_workspace_favorite on articles (workspace_id, is_favorite, updated_at desc);
+create index if not exists idx_articles_workspace_source_project on articles (workspace_id, source_project, updated_at desc);
 create index if not exists idx_analysis_runs_article_id on analysis_runs (article_id);
 create index if not exists idx_topic_candidates_analysis_run_id on topic_candidates (analysis_run_id);
 create index if not exists idx_topic_candidates_workspace_status on topic_candidates (workspace_id, status);
 create index if not exists idx_drafts_workspace_updated_at on drafts (workspace_id, updated_at desc);
+create index if not exists idx_drafts_workspace_channel_queue on drafts (workspace_id, content_channel, publish_status, queue_order, updated_at desc);
 create index if not exists idx_assets_workspace_status on assets (workspace_id, status);
 create unique index if not exists idx_assets_workspace_sha256_unique on assets (workspace_id, sha256) where sha256 <> '';
 create index if not exists idx_asset_links_asset_id on asset_links (asset_id);

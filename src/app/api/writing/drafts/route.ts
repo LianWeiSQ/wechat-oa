@@ -1,15 +1,16 @@
 import { errorJson, stores } from "@/app/api/_helpers";
 import { createReviewAiSettings, ensureWritingStructureRuns, generateOriginalDraftFromTopic } from "@/lib/writing-agent";
-import type { Article } from "@/lib/types";
+import type { Article, ContentChannel } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const { topic, referenceArticleIds, blueprintId } = (await request.json().catch(() => ({}))) as {
+    const { topic, referenceArticleIds, blueprintId, channel } = (await request.json().catch(() => ({}))) as {
       topic?: string;
       referenceArticleIds?: string[];
       blueprintId?: string;
+      channel?: ContentChannel;
     };
     const trimmedTopic = String(topic ?? "").trim();
     const articleIds = Array.from(new Set((referenceArticleIds ?? []).map((id) => String(id).trim()).filter(Boolean)));
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
     const result = await generateOriginalDraftFromTopic({
       topic: trimmedTopic,
       articles,
+      channel: channel === "xiaohongshu" ? "xiaohongshu" : "wechat",
       blueprint,
       structureRuns,
       settings,

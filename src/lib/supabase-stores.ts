@@ -3,6 +3,8 @@ import { stripHtml } from "@/lib/analysis";
 import { normalizeArticleCategory, suggestArticleCategory } from "@/lib/article-categories";
 import { createId, nowIso } from "@/lib/ids";
 import {
+  getLocalEnvAiSettings,
+  hasLocalAiEnvConfig,
   normalizeAiSettings,
   normalizeImageSize,
   sealSecret,
@@ -26,12 +28,14 @@ import type {
   ArticleInput,
   ArticleParseRun,
   ArticleSourceType,
+  ContentChannel,
   ContentAgentRun,
   ContentAgentStep,
   DraftImageAsset,
   ImageSettings,
   ImageSize,
   LocalDraft,
+  PublishStatus,
   PublicImageSettings,
   PublicWeChatConfig,
   WritingBlueprint,
@@ -81,6 +85,7 @@ function createSupabaseArticleStore(client: SupabaseClient, workspaceId: string)
       const timestamp = nowIso();
       const sourceType = normalizeSourceType(input.sourceType, originalUrl);
       const sourceName = normalizeRequiredText(input.sourceName ?? input.sourceAccount, "未知来源");
+      const sourceProject = normalizeRequiredText(input.sourceProject, sourceName);
       const contentHtml = normalizeContentHtml(input);
       const contentText = normalizeContentText(input, contentHtml);
       const category = input.category?.trim()
@@ -91,6 +96,7 @@ function createSupabaseArticleStore(client: SupabaseClient, workspaceId: string)
         title: input.title.trim(),
         sourceType,
         sourceName,
+        sourceProject,
         sourceAccount: sourceName,
         originalUrl,
         author: input.author?.trim() ?? "",
@@ -143,6 +149,7 @@ function createSupabaseArticleStore(client: SupabaseClient, workspaceId: string)
       const originalUrl = input.originalUrl === undefined ? existing.originalUrl : normalizeOriginalUrl(input.originalUrl);
       const sourceType = normalizeSourceType(input.sourceType ?? existing.sourceType, originalUrl);
       const sourceName = normalizeRequiredText(input.sourceName ?? input.sourceAccount ?? existing.sourceName, existing.sourceName);
+      const sourceProject = input.sourceProject === undefined ? articleSourceProject(existing) : normalizeRequiredText(input.sourceProject, sourceName);
       const contentHtml = (input.contentHtml ?? input.content ?? input.contentText ?? existing.contentHtml).trim();
       const contentText = (input.contentText ?? stripHtml(contentHtml)).trim();
       const category = input.category === undefined ? existing.category : normalizeArticleCategory(input.category);
@@ -156,6 +163,7 @@ function createSupabaseArticleStore(client: SupabaseClient, workspaceId: string)
           title,
           source_type: sourceType,
           source_name: sourceName,
+          source_project: sourceProject,
           source_account: sourceName,
           original_url: originalUrl,
           author: input.author ?? existing.author,
@@ -197,7 +205,7 @@ function createSupabaseArticleStore(client: SupabaseClient, workspaceId: string)
         return articles;
       }
       return articles.filter((article) =>
-        [article.title, article.sourceName, article.sourceAccount, article.author, article.category, article.tags.join(" ")]
+        [article.title, article.sourceName, article.sourceProject ?? "", article.sourceAccount, article.author, article.category, article.tags.join(" ")]
           .join(" ")
           .toLowerCase()
           .includes(needle),
@@ -414,13 +422,31 @@ function createSupabaseWritingStore(client: SupabaseClient, workspaceId: string)
 
 function createSupabaseDraftStore(client: SupabaseClient, workspaceId: string) {
   const store = {
-    async createDraft(input: Pick<LocalDraft, "title" | "body" | "sourceAnalysisIds" | "exportFormat">): Promise<LocalDraft> {
+    async createDraft(
+      input: Pick<LocalDraft, "title" | "body" | "sourceAnalysisIds" | "exportFormat"> &
+        Partial<
+          Pick<
+            LocalDraft,
+            "sourceArticleIds" | "contentChannel" | "publishStatus" | "plannedPublishAt" | "publishedAt" | "queueOrder" | "notes"
+          >
+        >,
+    ): Promise<LocalDraft> {
       const timestamp = nowIso();
+      const contentChannel = normalizeContentChannel(input.contentChannel);
+      const publishStatus = normalizePublishStatus(input.publishStatus);
+      const publishedAt = publishStatus === "published" ? normalizeOptionalIso(input.publishedAt) || timestamp : normalizeOptionalIso(input.publishedAt);
       const draft: LocalDraft = {
         id: createId("draft"),
         title: input.title.trim(),
         body: input.body.trim(),
-        sourceAnalysisIds: input.sourceAnalysisIds,
+        sourceAnalysisIds: normalizeIds(input.sourceAnalysisIds),
+        sourceArticleIds: normalizeIds(input.sourceArticleIds ?? []),
+        contentChannel,
+        publishStatus,
+        plannedPublishAt: normalizeOptionalIso(input.plannedPublishAt),
+        publishedAt,
+        queueOrder: normalizeQueueOrder(input.queueOrder, await nextDraftQueueOrder(client, workspaceId, contentChannel)),
+        notes: input.notes?.trim() ?? "",
         exportFormat: input.exportFormat,
         wechatDraftStatus: "not_sent",
         createdAt: timestamp,
@@ -432,6 +458,13 @@ function createSupabaseDraftStore(client: SupabaseClient, workspaceId: string) {
         title: draft.title,
         body: draft.body,
         source_analysis_ids: draft.sourceAnalysisIds,
+        source_article_ids: draft.sourceArticleIds,
+        content_channel: draft.contentChannel,
+        publish_status: draft.publishStatus,
+        planned_publish_at: draft.plannedPublishAt,
+        published_at: draft.publishedAt,
+        queue_order: draft.queueOrder,
+        notes: draft.notes,
         export_format: draft.exportFormat,
         wechat_draft_status: draft.wechatDraftStatus,
         wechat_media_id: draft.wechatMediaId ?? null,
@@ -475,23 +508,80 @@ function createSupabaseDraftStore(client: SupabaseClient, workspaceId: string) {
     },
 
     async updateDraftBody(id: string, body: string): Promise<LocalDraft | null> {
+      return store.updateDraft(id, { body });
+    },
+
+    async updateDraft(
+      id: string,
+      input: Partial<
+        Pick<
+          LocalDraft,
+          | "title"
+          | "body"
+          | "sourceAnalysisIds"
+          | "sourceArticleIds"
+          | "contentChannel"
+          | "publishStatus"
+          | "plannedPublishAt"
+          | "publishedAt"
+          | "queueOrder"
+          | "notes"
+          | "exportFormat"
+        >
+      >,
+    ): Promise<LocalDraft | null> {
+      const existing = await store.getDraft(id);
+      if (!existing) {
+        return null;
+      }
+      const timestamp = nowIso();
+      const contentChannel = normalizeContentChannel(input.contentChannel ?? existing.contentChannel);
+      const publishStatus = normalizePublishStatus(input.publishStatus ?? existing.publishStatus);
+      const publishedAt =
+        publishStatus === "published"
+          ? normalizeOptionalIso(input.publishedAt ?? existing.publishedAt) || timestamp
+          : input.publishedAt !== undefined
+            ? normalizeOptionalIso(input.publishedAt)
+            : publishStatus === existing.publishStatus
+              ? existing.publishedAt ?? ""
+              : "";
       const { error } = await client
         .from("drafts")
-        .update({ body: body.trim(), updated_at: nowIso() })
+        .update({
+          title: input.title?.trim() || existing.title,
+          body: input.body === undefined ? existing.body : input.body.trim(),
+          source_analysis_ids: normalizeIds(input.sourceAnalysisIds ?? existing.sourceAnalysisIds),
+          source_article_ids: normalizeIds(input.sourceArticleIds ?? existing.sourceArticleIds ?? []),
+          content_channel: contentChannel,
+          publish_status: publishStatus,
+          planned_publish_at: normalizeOptionalIso(input.plannedPublishAt ?? existing.plannedPublishAt),
+          published_at: publishedAt,
+          queue_order:
+            input.queueOrder === undefined
+              ? existing.queueOrder ?? (await nextDraftQueueOrder(client, workspaceId, contentChannel))
+              : normalizeQueueOrder(input.queueOrder, existing.queueOrder ?? 0),
+          notes: input.notes === undefined ? existing.notes ?? "" : input.notes.trim(),
+          export_format: input.exportFormat === "markdown" ? "markdown" : "html",
+          updated_at: timestamp,
+        })
         .eq("workspace_id", workspaceId)
         .eq("id", id);
-      assertNoError(error, "更新草稿失败");
+      assertNoError(error, "更新作品失败");
       return store.getDraft(id);
     },
 
-    async listDrafts(): Promise<LocalDraft[]> {
+    async listDrafts(query: { channel?: ContentChannel | "all"; status?: PublishStatus | "all" } = {}): Promise<LocalDraft[]> {
       const { data, error } = await client
         .from("drafts")
         .select("*")
         .eq("workspace_id", workspaceId)
+        .order("queue_order", { ascending: true })
         .order("updated_at", { ascending: false });
       assertNoError(error, "读取草稿列表失败");
-      return ((data ?? []) as JsonRecord[]).map(mapDraft);
+      return ((data ?? []) as JsonRecord[])
+        .map(mapDraft)
+        .filter((draft) => !query.channel || query.channel === "all" || draft.contentChannel === query.channel)
+        .filter((draft) => !query.status || query.status === "all" || draft.publishStatus === query.status);
     },
 
     async markWeChatResult(id: string, status: LocalDraft["wechatDraftStatus"], mediaId?: string): Promise<LocalDraft | null> {
@@ -867,6 +957,10 @@ function createSupabaseDraftImageStore(client: SupabaseClient, workspaceId: stri
 function createSupabaseSettingsStore(client: SupabaseClient, workspaceId: string) {
   return {
     async getAiSettings(): Promise<AiSettings> {
+      if (hasLocalAiEnvConfig()) {
+        return getLocalEnvAiSettings();
+      }
+
       const saved = await getJson<Partial<AiSettings> & { apiKeyEncrypted?: string; reviewApiKeyEncrypted?: string }>(
         client,
         workspaceId,
@@ -881,6 +975,10 @@ function createSupabaseSettingsStore(client: SupabaseClient, workspaceId: string
     },
 
     async saveAiSettings(settings: Partial<AiSettings>): Promise<AiSettings> {
+      if (hasLocalAiEnvConfig()) {
+        return getLocalEnvAiSettings();
+      }
+
       const normalized = normalizeAiSettings(settings, await this.getAiSettings());
       await setJson(client, workspaceId, "ai", {
         modelProvider: normalized.modelProvider,
@@ -896,6 +994,11 @@ function createSupabaseSettingsStore(client: SupabaseClient, workspaceId: string
         wireApi: normalized.wireApi,
         reasoningEffort: normalized.reasoningEffort,
         disableResponseStorage: normalized.disableResponseStorage,
+        requiresOpenAiAuth: normalized.requiresOpenAiAuth,
+        networkAccess: normalized.networkAccess,
+        windowsWslSetupAcknowledged: normalized.windowsWslSetupAcknowledged,
+        modelContextWindow: normalized.modelContextWindow,
+        modelAutoCompactTokenLimit: normalized.modelAutoCompactTokenLimit,
       });
       return normalized;
     },
@@ -1029,6 +1132,7 @@ function mapArticle(row: JsonRecord): Article {
     title: stringValue(row.title),
     sourceType: sourceTypeValue(row.source_type),
     sourceName: stringValue(row.source_name || row.source_account),
+    sourceProject: stringValue(row.source_project || row.source_name || row.source_account),
     sourceAccount: stringValue(row.source_account || row.source_name),
     originalUrl: stringValue(row.original_url),
     author: stringValue(row.author),
@@ -1139,6 +1243,13 @@ function mapDraft(row: JsonRecord): LocalDraft {
     title: stringValue(row.title),
     body: stringValue(row.body),
     sourceAnalysisIds: arrayValue<string>(row.source_analysis_ids),
+    sourceArticleIds: arrayValue<string>(row.source_article_ids),
+    contentChannel: normalizeContentChannel(row.content_channel),
+    publishStatus: normalizePublishStatus(row.publish_status),
+    plannedPublishAt: stringValue(row.planned_publish_at),
+    publishedAt: stringValue(row.published_at),
+    queueOrder: numberValue(row.queue_order),
+    notes: stringValue(row.notes),
     exportFormat: stringValue(row.export_format) as LocalDraft["exportFormat"],
     wechatDraftStatus: stringValue(row.wechat_draft_status) as LocalDraft["wechatDraftStatus"],
     wechatMediaId: stringValue(row.wechat_media_id) || undefined,
@@ -1205,6 +1316,7 @@ function toArticleRow(article: Article, workspaceId: string) {
     title: article.title,
     source_type: article.sourceType,
     source_name: article.sourceName,
+    source_project: article.sourceProject ?? article.sourceName,
     source_account: article.sourceAccount,
     original_url: article.originalUrl,
     author: article.author,
@@ -1245,6 +1357,49 @@ function normalizeSourceType(input: ArticleSourceType | undefined, originalUrl: 
 function normalizeRequiredText(value: string | undefined, fallback: string): string {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : fallback;
+}
+
+function articleSourceProject(article: Article): string {
+  return article.sourceProject?.trim() || article.sourceName || article.sourceAccount || "引用知识库";
+}
+
+function normalizeContentChannel(value: unknown): ContentChannel {
+  return value === "xiaohongshu" ? "xiaohongshu" : "wechat";
+}
+
+function normalizePublishStatus(value: unknown): PublishStatus {
+  return value === "queued" || value === "published" || value === "archived" ? value : "draft";
+}
+
+function normalizeIds(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => String(value).trim()).filter(Boolean)));
+}
+
+function normalizeQueueOrder(value: unknown, fallback: number): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.trunc(numeric) : fallback;
+}
+
+function normalizeOptionalIso(value: unknown): string {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return "";
+  }
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? text : date.toISOString();
+}
+
+async function nextDraftQueueOrder(client: SupabaseClient, workspaceId: string, channel: ContentChannel): Promise<number> {
+  const { data, error } = await client
+    .from("drafts")
+    .select("queue_order")
+    .eq("workspace_id", workspaceId)
+    .eq("content_channel", channel)
+    .order("queue_order", { ascending: false })
+    .limit(1);
+  assertNoError(error, "读取作品排序失败");
+  const row = (data?.[0] ?? {}) as JsonRecord;
+  return numberValue(row.queue_order) + 1;
 }
 
 function normalizeContentHtml(input: ArticleInput): string {

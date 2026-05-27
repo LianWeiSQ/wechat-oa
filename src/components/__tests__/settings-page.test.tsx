@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsPage } from "@/components/settings-page";
 
 const aiSettings = {
-  modelProvider: "crs",
-  baseUrl: "https://vip.auto-code.net",
+  modelProvider: "OpenAI",
+  baseUrl: "http://127.0.0.1:3000",
   apiKey: "sk-test",
   model: "gpt-5.4",
   reviewModel: "gpt-5.4",
@@ -49,7 +49,7 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("heading", { name: "图片模型配置" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "微信后台" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "返回工作台" })).toHaveAttribute("href", "/");
-    expect(screen.getByDisplayValue("https://vip.auto-code.net")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("http://127.0.0.1:3000")).toBeInTheDocument();
     expect(screen.getByDisplayValue("https://review.example.com/v1")).toBeInTheDocument();
     expect(screen.getByDisplayValue("gpt-image-2")).toBeInTheDocument();
   });

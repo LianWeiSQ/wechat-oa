@@ -170,8 +170,8 @@ describe("AI article analysis", () => {
 
     const raw = await callOpenAICompatible(createModelRequest(article, ANALYSIS_TEMPLATES[0], "gpt-5.4"), {
       ...settings,
-      modelProvider: "crs",
-      baseUrl: "https://vip.auto-code.net",
+      modelProvider: "OpenAI",
+      baseUrl: "http://127.0.0.1:3000",
       model: "gpt-5.4",
       wireApi: "responses",
       reasoningEffort: "xhigh",
@@ -179,7 +179,7 @@ describe("AI article analysis", () => {
     });
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
 
-    expect(fetchMock.mock.calls[0][0]).toBe("https://vip.auto-code.net/responses");
+    expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:3000/responses");
     expect(body.model).toBe("gpt-5.4");
     expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.store).toBe(false);

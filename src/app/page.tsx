@@ -5,9 +5,10 @@ import { ANALYSIS_TEMPLATES } from "@/lib/analysis";
 import { DEFAULT_THEME_MODE, THEME_COOKIE_NAME, normalizeThemeMode } from "@/lib/theme";
 
 export default async function Home() {
-  const { articleStore, writingStore } = stores();
-  const [articles, blueprints, structureRuns, cookieStore] = await Promise.all([
+  const { articleStore, draftStore, writingStore } = stores();
+  const [articles, drafts, blueprints, structureRuns, cookieStore] = await Promise.all([
     articleStore.listArticles(),
+    draftStore.listDrafts(),
     writingStore.listBlueprints(),
     writingStore.listStructureRuns(),
     cookies(),
@@ -17,6 +18,7 @@ export default async function Home() {
   return (
     <Workbench
       initialArticles={articles}
+      initialDrafts={drafts}
       templates={ANALYSIS_TEMPLATES}
       initialWritingBlueprints={blueprints}
       initialWritingStructureRuns={structureRuns}

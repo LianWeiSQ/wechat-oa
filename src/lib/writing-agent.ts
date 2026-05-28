@@ -6,10 +6,13 @@ import type {
   Article,
   ContentChannel,
   DraftReview,
+  EditorialBoardPlan,
   LocalDraft,
   OriginalArticleDraft,
+  ProfessionalImageBrief,
   SourceReuseWarning,
   WritingBlueprint,
+  WritingStrategyId,
   WritingStructureRun,
   WritingTechnicalBrief,
 } from "@/lib/types";
@@ -26,9 +29,11 @@ type WritingStore = {
 type DraftStore = {
   createDraft(
     input: Pick<LocalDraft, "title" | "body" | "sourceAnalysisIds" | "exportFormat"> &
-      Partial<Pick<LocalDraft, "sourceArticleIds" | "contentChannel" | "publishStatus">>,
+      Partial<Pick<LocalDraft, "sourceArticleIds" | "contentChannel" | "publishStatus" | "notes">>,
   ): MaybePromise<LocalDraft>;
 };
+
+export const EDITORIAL_BOARD_STRATEGY_ID: WritingStrategyId = "editorial-board-v1";
 
 const structureSchema = z.object({
   titlePattern: z.string().default(""),
@@ -81,6 +86,42 @@ const technicalBriefResponseSchema = z.object({
     .default([]),
   riskFlags: z.array(z.string()).default([]),
   styleInstructions: z.array(z.string()).default([]),
+});
+
+const imageBriefSchema = z.object({
+  role: z.enum(["hero", "explanation"]).default("explanation"),
+  prompt: z.string().default(""),
+  alt: z.string().default(""),
+  caption: z.string().default(""),
+});
+
+const editorialAgentPassSchema = z.object({
+  name: z.string().min(1),
+  role: z.string().default(""),
+  brief: z.string().default(""),
+  directives: z.array(z.string()).default([]),
+  riskFlags: z.array(z.string()).default([]),
+  status: z.enum(["ok", "warning"]).default("ok"),
+});
+
+const editorialBoardPlanResponseSchema = z.object({
+  strategyId: z.literal(EDITORIAL_BOARD_STRATEGY_ID).default(EDITORIAL_BOARD_STRATEGY_ID),
+  strategyName: z.string().default("策略一：编辑部流水线"),
+  targetScore: z.number().min(0).max(100).default(86),
+  editorInChiefBrief: z.string().default(""),
+  agentPasses: z.array(editorialAgentPassSchema).default([]),
+  titleAngles: z.array(z.string()).default([]),
+  openingOptions: z.array(z.string()).default([]),
+  rhythmPlan: z.array(z.string()).default([]),
+  layoutDirectives: z.array(z.string()).default([]),
+  imageBriefs: z.array(imageBriefSchema).default([]),
+  collectibleChecklist: z
+    .object({
+      title: z.string().default("可收藏清单"),
+      items: z.array(z.string()).default([]),
+    })
+    .default({ title: "可收藏清单", items: [] }),
+  reviewRubric: z.array(z.string()).default([]),
 });
 
 const editorialScoreSchema = z.object({
@@ -376,7 +417,7 @@ export function parseTechnicalBriefResponse(raw: unknown): WritingTechnicalBrief
   return technicalBriefResponseSchema.parse(normalizeTechnicalBriefPayload(value));
 }
 
-export function createOriginalDraftRequest(input: {
+export function createEditorialBoardPlanRequest(input: {
   topic: string;
   articles: Article[];
   channel?: ContentChannel;
@@ -386,6 +427,116 @@ export function createOriginalDraftRequest(input: {
   model: string;
 }): ModelRequest {
   const channel = normalizeContentChannel(input.channel);
+  return {
+    model: input.model,
+    temperature: 0.18,
+    max_output_tokens: 3200,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "你是 AI 技术公众号的主编 Agent，负责把一次选题拆成一套编辑部协作方案。",
+          "这是策略一：编辑部流水线。你先不写正文，只安排各 Agent 的工作和验收标准。",
+          "编辑部必须包含：主编 Agent、开头 Agent、节奏 Agent、排版 Agent、图片插入 Agent、可收藏清单 Agent、审稿 Agent。",
+          "方案要服务原创文章：不洗稿、不复刻参考文章句子、不做课程/社群/资料领取/加微信等销售 CTA。",
+          "图片插入 Agent 只产出配图 brief 和插入位置建议，不编造真实截图或未生成的实物图。",
+          "只输出 JSON，不要 Markdown，不要解释 JSON 外的内容。",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          `选题：${input.topic}`,
+          `目标平台：${channelLabel(channel)}`,
+          "",
+          "请输出 EditorialBoardPlan JSON，字段如下：",
+          `strategyId: "${EDITORIAL_BOARD_STRATEGY_ID}"`,
+          'strategyName: "策略一：编辑部流水线"',
+          "targetScore: number，最终审稿希望达到的最低分，建议 85-90。",
+          "editorInChiefBrief: string，主编对这篇文章的定调、主读者和核心矛盾。",
+          "agentPasses: [{name, role, brief, directives[], riskFlags[], status}]，必须覆盖主编、开头、节奏、排版、图片插入、可收藏清单、审稿七个 Agent。",
+          "titleAngles: string[]，至少 5 个标题方向，不是最终标题。",
+          "openingOptions: string[]，至少 3 个开头方案，要求像真实技术人，不要假事故。",
+          "rhythmPlan: string[]，说明每一段/每一节怎样推进，不要技术文档腔。",
+          "layoutDirectives: string[]，说明 h2、blockquote、列表、留白和重点句如何使用。",
+          "imageBriefs: [{role, prompt, alt, caption}]，2-4 张图，role 只能是 hero 或 explanation。",
+          "collectibleChecklist: {title, items[]}，读者读完愿意收藏的一组工程检查项。",
+          "reviewRubric: string[]，最终审稿必须逐条检查的标准。",
+          "",
+          "技术骨架 Agent 输出：",
+          input.technicalBrief ? JSON.stringify(input.technicalBrief) : "暂无技术骨架，请自行保持事实克制。",
+          "",
+          "写作蓝图：",
+          input.blueprint ? JSON.stringify(toBlueprintPrompt(input.blueprint)) : "没有指定蓝图，请使用默认结构。",
+          "",
+          "参考结构资产：",
+          JSON.stringify(
+            (input.structureRuns ?? []).map((run) => ({
+              articleId: run.articleId,
+              qualityScore: run.qualityScore,
+              structure: run.structure,
+            })),
+          ),
+          "",
+          "参考文章摘要：",
+          ...input.articles.map((article, index) =>
+            [
+              `${index + 1}. ${article.title}`,
+              `articleId: ${article.id}`,
+              `来源：${article.sourceName}`,
+              `分类：${article.category}`,
+              `正文摘录：${clipText(article.contentText, 1200)}`,
+            ].join("\n"),
+          ),
+        ].join("\n"),
+      },
+    ],
+  };
+}
+
+export async function generateEditorialBoardPlan(input: {
+  topic: string;
+  articles: Article[];
+  channel?: ContentChannel;
+  blueprint?: WritingBlueprint | null;
+  structureRuns?: WritingStructureRun[];
+  technicalBrief?: WritingTechnicalBrief;
+  settings: AiSettings;
+  modelClient?: ModelClient;
+}): Promise<EditorialBoardPlan> {
+  assertModelSettings(input.settings);
+  const request = createEditorialBoardPlanRequest({
+    topic: input.topic,
+    articles: input.articles,
+    channel: input.channel,
+    blueprint: input.blueprint,
+    structureRuns: input.structureRuns,
+    technicalBrief: input.technicalBrief,
+    model: input.settings.model,
+  });
+  return parseEditorialBoardPlanResponse(await (input.modelClient ?? callOpenAICompatible)(request, input.settings));
+}
+
+export function parseEditorialBoardPlanResponse(raw: unknown): EditorialBoardPlan {
+  const value = typeof raw === "string" ? parseJsonString(raw) : raw;
+  return ensureDefaultEditorialBoardPlan(editorialBoardPlanResponseSchema.parse(normalizeEditorialBoardPlanPayload(value)));
+}
+
+export function createOriginalDraftRequest(input: {
+  topic: string;
+  articles: Article[];
+  channel?: ContentChannel;
+  blueprint?: WritingBlueprint | null;
+  structureRuns?: WritingStructureRun[];
+  technicalBrief?: WritingTechnicalBrief;
+  strategyId?: WritingStrategyId;
+  editorialBoardPlan?: EditorialBoardPlan | null;
+  model: string;
+}): ModelRequest {
+  const channel = normalizeContentChannel(input.channel);
+  const strategyId = normalizeWritingStrategyId(input.strategyId);
+  const isEditorialBoardStrategy = strategyId === EDITORIAL_BOARD_STRATEGY_ID;
   return {
     model: input.model,
     temperature: 0.42,
@@ -399,6 +550,9 @@ export function createOriginalDraftRequest(input: {
           "你的任务不是写技术文档，而是写一篇真的有人愿意点开、读完、收藏的原创公众号文章。",
           "写作前必须完成：选题判断、读者画像、强观点提炼、真实场景开头、标题候选、证据组织、公众号节奏控制和发布前自评。",
           "你必须服从技术骨架 Agent 给出的事实边界；它没确认的源码路径、性能数字、真实事故，不要写死。",
+          isEditorialBoardStrategy
+            ? "本次必须执行策略一：编辑部流水线。你要严格服从主编、开头、节奏、排版、图片插入、可收藏清单和审稿 Agent 的分工方案。"
+            : "本次使用默认写作链路。",
           "你的任务是写原创文章，不洗稿、不复刻参考文章句子、不搬运标题套路，也不要编造不存在的源码路径或数据。",
           "v1 只做纯内容：不要课程、社群、资料领取、加微信、训练营、成交暗示等销售 CTA。",
           "写作要克制、具体、有工程判断，避免恐吓式焦虑；可以有作者判断，但不能空喊口号。",
@@ -433,13 +587,21 @@ export function createOriginalDraftRequest(input: {
           "5. 标题/开头：标题要有冲突或收益；前 300 字必须说明为什么现在值得读。",
           "6. 节奏：每个 h2 都要有信息量，不要使用“核心机制工程拆解”这类泛标题；每段尽量短。",
           "7. 证据：可以引用参考文章里的设计对象和结构资产，但要讲因果关系，不要堆路径，不确定的源码路径不要写死。",
-          "8. 主编重写：如果初稿像技术文档、AI 味重、开头弱、标题不够公众号，请先自我重写后再输出最终 JSON。",
+          isEditorialBoardStrategy
+            ? "8. 策略一执行：主编定调 -> 开头 Agent 重写前 300 字 -> 节奏 Agent 压段落和转折 -> 排版 Agent 加 h2/blockquote/列表 -> 图片插入 Agent 放 figure 占位 -> 可收藏清单 Agent 生成收藏段 -> 审稿 Agent 自检后再输出最终 JSON。"
+            : "8. 主编重写：如果初稿像技术文档、AI 味重、开头弱、标题不够公众号，请先自我重写后再输出最终 JSON。",
           "9. 质检：自评低于 75 分时必须继续重写；最终 editorialScore 要诚实，不能虚高。",
           channelWritingInstruction(channel),
           "",
           "推荐结构：真实工程观察开头 -> 反常识判断 -> 用读者熟悉的失败模式解释 Harness -> 拆 3 个关键机制 -> 给项目/面试可用框架 -> 克制结尾。",
           "原创约束：参考文章只作为素材和结构来源，不得复刻来源文章的长句、段落、标题和销售表达。",
           "默认作者声音：懂工程、克制、有判断，不卖焦虑；可以写“我更愿意把它理解为...”“这不是概念洁癖，而是线上故障迟早会撞到的边界”。",
+          isEditorialBoardStrategy
+            ? "策略一排版要求：正文必须包含 2-4 个 figure 配图占位（figcaption 写图片意图）、至少 1 个 blockquote 强判断、1 个可收藏清单，不要把 Agent 分工名称当作正文小标题。"
+            : "",
+          "",
+          "策略一编辑部方案：",
+          input.editorialBoardPlan ? JSON.stringify(toEditorialBoardPlanPrompt(input.editorialBoardPlan)) : "未启用策略一或暂无编辑部方案。",
           "",
           "写作蓝图：",
           input.blueprint ? JSON.stringify(toBlueprintPrompt(input.blueprint)) : "没有指定蓝图，请使用默认结构。",
@@ -476,6 +638,7 @@ export async function generateOriginalDraftFromTopic(input: {
   channel?: ContentChannel;
   blueprint?: WritingBlueprint | null;
   structureRuns?: WritingStructureRun[];
+  strategyId?: WritingStrategyId;
   settings: AiSettings;
   reviewSettings?: AiSettings;
   draftStore: DraftStore;
@@ -485,6 +648,7 @@ export async function generateOriginalDraftFromTopic(input: {
   originalDraft: OriginalArticleDraft;
   draftBeforeReview: OriginalArticleDraft;
   technicalBrief: WritingTechnicalBrief;
+  editorialBoardPlan: EditorialBoardPlan | null;
   review: DraftReview;
   warnings: SourceReuseWarning[];
 }> {
@@ -499,6 +663,7 @@ export async function generateOriginalDraftFromTopic(input: {
     throw new Error("请至少选择一篇参考文章");
   }
   const modelClient = input.modelClient ?? callOpenAICompatible;
+  const strategyId = normalizeWritingStrategyId(input.strategyId);
   const technicalBrief = await generateTechnicalBrief({
     topic,
     articles: input.articles,
@@ -507,6 +672,19 @@ export async function generateOriginalDraftFromTopic(input: {
     settings: reviewSettings,
     modelClient,
   });
+  const editorialBoardPlan =
+    strategyId === EDITORIAL_BOARD_STRATEGY_ID
+      ? await generateEditorialBoardPlan({
+          topic,
+          articles: input.articles,
+          channel: input.channel,
+          blueprint: input.blueprint,
+          structureRuns: input.structureRuns,
+          technicalBrief,
+          settings: reviewSettings,
+          modelClient,
+        })
+      : null;
   const request = createOriginalDraftRequest({
     topic,
     articles: input.articles,
@@ -514,15 +692,30 @@ export async function generateOriginalDraftFromTopic(input: {
     blueprint: input.blueprint,
     structureRuns: input.structureRuns,
     technicalBrief,
+    strategyId,
+    editorialBoardPlan,
     model: input.settings.model,
   });
   const draftBeforeReview = parseOriginalDraftResponse(await modelClient(request, input.settings));
-  const review = await reviewAndReviseDraft({
+  const firstReview = await reviewAndReviseDraft({
     topic,
     articles: input.articles,
     channel: input.channel,
     technicalBrief,
+    strategyId,
+    editorialBoardPlan,
     draft: draftBeforeReview,
+    settings: reviewSettings,
+    modelClient,
+  });
+  const review = await maybeRunEditorialRevisionPass({
+    firstReview,
+    topic,
+    articles: input.articles,
+    channel: input.channel,
+    technicalBrief,
+    strategyId,
+    editorialBoardPlan,
     settings: reviewSettings,
     modelClient,
   });
@@ -535,9 +728,10 @@ export async function generateOriginalDraftFromTopic(input: {
     sourceArticleIds: input.articles.map((article) => article.id),
     contentChannel: normalizeContentChannel(input.channel),
     publishStatus: "draft",
+    notes: createDraftGenerationNotes({ strategyId, technicalBrief, editorialBoardPlan, review, warnings }),
     exportFormat: "html",
   });
-  return { draft, originalDraft, draftBeforeReview, technicalBrief, review, warnings };
+  return { draft, originalDraft, draftBeforeReview, technicalBrief, editorialBoardPlan, review, warnings };
 }
 
 export async function generateTechnicalBrief(input: {
@@ -564,10 +758,14 @@ export function createDraftReviewRequest(input: {
   articles: Article[];
   channel?: ContentChannel;
   technicalBrief: WritingTechnicalBrief;
+  strategyId?: WritingStrategyId;
+  editorialBoardPlan?: EditorialBoardPlan | null;
   draft: OriginalArticleDraft;
   model: string;
 }): ModelRequest {
   const channel = normalizeContentChannel(input.channel);
+  const strategyId = normalizeWritingStrategyId(input.strategyId);
+  const isEditorialBoardStrategy = strategyId === EDITORIAL_BOARD_STRATEGY_ID;
   return {
     model: input.model,
     temperature: 0.12,
@@ -580,6 +778,9 @@ export function createDraftReviewRequest(input: {
           "你是技术公众号的审稿 Agent，负责事实核验、删虚假场景、删 CTA、压缩废话并给出最终可发稿。",
           "审稿必须严格：不确定的源码路径、数据、具体事故、朋友案例要删除或改成克制表述。",
           "禁止课程、社群、资料领取、加微信、保持关注等转化 CTA。",
+          isEditorialBoardStrategy
+            ? "本次是策略一：编辑部流水线。你还要检查主编、开头、节奏、排版、图片插入、可收藏清单这些 Agent 的要求是否落地。"
+            : "本次是默认写作链路。",
           `如果文章像技术文档，要改成${channelLabel(channel)}可读；如果文章像营销文，要改成工程判断。`,
           channelReviewInstruction(channel),
           "只输出 JSON，不要 Markdown，不要解释 JSON 外的内容。",
@@ -604,6 +805,9 @@ export function createDraftReviewRequest(input: {
           "技术骨架：",
           JSON.stringify(input.technicalBrief),
           "",
+          "策略一编辑部方案：",
+          input.editorialBoardPlan ? JSON.stringify(toEditorialBoardPlanPrompt(input.editorialBoardPlan)) : "未启用策略一。",
+          "",
           "待审稿：",
           JSON.stringify(input.draft),
           "",
@@ -627,6 +831,8 @@ export async function reviewAndReviseDraft(input: {
   articles: Article[];
   channel?: ContentChannel;
   technicalBrief: WritingTechnicalBrief;
+  strategyId?: WritingStrategyId;
+  editorialBoardPlan?: EditorialBoardPlan | null;
   draft: OriginalArticleDraft;
   settings: AiSettings;
   modelClient?: ModelClient;
@@ -637,10 +843,59 @@ export async function reviewAndReviseDraft(input: {
     articles: input.articles,
     channel: input.channel,
     technicalBrief: input.technicalBrief,
+    strategyId: input.strategyId,
+    editorialBoardPlan: input.editorialBoardPlan,
     draft: input.draft,
     model: input.settings.model,
   });
   return parseDraftReviewResponse(await (input.modelClient ?? callOpenAICompatible)(request, input.settings), input.draft);
+}
+
+async function maybeRunEditorialRevisionPass(input: {
+  firstReview: DraftReview;
+  topic: string;
+  articles: Article[];
+  channel?: ContentChannel;
+  technicalBrief: WritingTechnicalBrief;
+  strategyId: WritingStrategyId;
+  editorialBoardPlan: EditorialBoardPlan | null;
+  settings: AiSettings;
+  modelClient: ModelClient;
+}): Promise<DraftReview> {
+  const targetScore = input.editorialBoardPlan?.targetScore ?? 86;
+  if (
+    input.strategyId !== EDITORIAL_BOARD_STRATEGY_ID ||
+    input.firstReview.score >= targetScore ||
+    !input.firstReview.revisedDraft
+  ) {
+    return input.firstReview;
+  }
+
+  const secondReview = await reviewAndReviseDraft({
+    topic: input.topic,
+    articles: input.articles,
+    channel: input.channel,
+    technicalBrief: input.technicalBrief,
+    strategyId: input.strategyId,
+    editorialBoardPlan: input.editorialBoardPlan,
+    draft: input.firstReview.revisedDraft,
+    settings: input.settings,
+    modelClient: input.modelClient,
+  });
+  return mergeReviewPasses(input.firstReview, secondReview);
+}
+
+function mergeReviewPasses(firstReview: DraftReview, secondReview: DraftReview): DraftReview {
+  return {
+    ...secondReview,
+    factIssues: Array.from(new Set([...firstReview.factIssues, ...secondReview.factIssues])),
+    fakeSceneIssues: Array.from(new Set([...firstReview.fakeSceneIssues, ...secondReview.fakeSceneIssues])),
+    ctaIssues: Array.from(new Set([...firstReview.ctaIssues, ...secondReview.ctaIssues])),
+    styleIssues: Array.from(new Set([...firstReview.styleIssues, ...secondReview.styleIssues])),
+    compressionNotes: Array.from(new Set([...firstReview.compressionNotes, ...secondReview.compressionNotes])),
+    revisionSummary: [firstReview.revisionSummary, secondReview.revisionSummary].filter(Boolean).join("；二次审稿："),
+    revisedDraft: secondReview.revisedDraft ?? firstReview.revisedDraft,
+  };
 }
 
 export function parseOriginalDraftResponse(raw: unknown): OriginalArticleDraft {
@@ -955,6 +1210,116 @@ function normalizeTechnicalBriefPayload(value: unknown): unknown {
   };
 }
 
+function normalizeEditorialBoardPlanPayload(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  const rawPlan = unwrapEditorialBoardPlanPayload(value);
+  if (!isRecord(rawPlan)) {
+    return rawPlan;
+  }
+  return {
+    strategyId: EDITORIAL_BOARD_STRATEGY_ID,
+    strategyName: normalizeText(pickValue(rawPlan, ["strategyName", "strategy_name", "name", "策略名称"])) || "策略一：编辑部流水线",
+    targetScore: normalizeScore(pickValue(rawPlan, ["targetScore", "target_score", "目标分"])),
+    editorInChiefBrief: normalizeText(
+      pickValue(rawPlan, ["editorInChiefBrief", "editor_in_chief_brief", "chiefEditorBrief", "主编定调", "主编意见"]),
+    ),
+    agentPasses: normalizeAgentPasses(pickValue(rawPlan, ["agentPasses", "agents", "passes", "agent_plan", "编辑部分工"])),
+    titleAngles: normalizeStringArray(pickValue(rawPlan, ["titleAngles", "title_angles", "titles", "标题方向"])),
+    openingOptions: normalizeStringArray(pickValue(rawPlan, ["openingOptions", "opening_options", "openings", "开头方案"])),
+    rhythmPlan: normalizeStringArray(pickValue(rawPlan, ["rhythmPlan", "rhythm_plan", "pacing", "节奏计划"])),
+    layoutDirectives: normalizeStringArray(pickValue(rawPlan, ["layoutDirectives", "layout_directives", "layout", "排版要求"])),
+    imageBriefs: normalizeImageBriefs(pickValue(rawPlan, ["imageBriefs", "image_briefs", "images", "图片方案"])),
+    collectibleChecklist: normalizeCollectibleChecklist(pickValue(rawPlan, ["collectibleChecklist", "collectible_checklist", "checklist", "可收藏清单"])),
+    reviewRubric: normalizeStringArray(pickValue(rawPlan, ["reviewRubric", "review_rubric", "rubric", "审稿标准"])),
+  };
+}
+
+function unwrapEditorialBoardPlanPayload(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  if (value.agentPasses || value.editorInChiefBrief || value.collectibleChecklist) {
+    return value;
+  }
+  for (const key of ["editorialBoardPlan", "plan", "result", "data", "output"]) {
+    const nested = value[key];
+    if (isRecord(nested)) {
+      return nested;
+    }
+  }
+  return value;
+}
+
+function normalizeAgentPasses(value: unknown): unknown[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (!isRecord(item)) {
+        return {
+          name: normalizeText(item),
+          role: "",
+          brief: "",
+          directives: [],
+          riskFlags: [],
+          status: "ok",
+        };
+      }
+      const rawStatus = normalizeText(pickValue(item, ["status", "状态"])).toLowerCase();
+      return {
+        name: normalizeText(pickValue(item, ["name", "agent", "title", "名称"])),
+        role: normalizeText(pickValue(item, ["role", "职责"])),
+        brief: normalizeText(pickValue(item, ["brief", "summary", "说明", "任务"])),
+        directives: normalizeStringArray(pickValue(item, ["directives", "rules", "suggestions", "要求", "指令"])),
+        riskFlags: normalizeStringArray(pickValue(item, ["riskFlags", "risks", "warnings", "风险"])),
+        status: rawStatus === "warning" || rawStatus === "warn" || rawStatus === "风险" ? "warning" : "ok",
+      };
+    })
+    .filter((item) => isRecord(item) && normalizeText(item.name));
+}
+
+function normalizeImageBriefs(value: unknown): ProfessionalImageBrief[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item, index) => {
+      if (!isRecord(item)) {
+        return {
+          role: index === 0 ? "hero" : "explanation",
+          prompt: normalizeText(item),
+          alt: "文章配图",
+          caption: normalizeText(item),
+        } satisfies ProfessionalImageBrief;
+      }
+      const rawRole = normalizeText(pickValue(item, ["role", "type", "位置", "类型"]));
+      return {
+        role: rawRole === "hero" ? "hero" : "explanation",
+        prompt: normalizeText(pickValue(item, ["prompt", "imagePrompt", "提示词", "画面"])),
+        alt: normalizeText(pickValue(item, ["alt", "替代文本"])) || "文章配图",
+        caption: normalizeText(pickValue(item, ["caption", "说明", "figcaption"])),
+      } satisfies ProfessionalImageBrief;
+    })
+    .filter((brief) => brief.prompt || brief.caption || brief.alt)
+    .slice(0, 6);
+}
+
+function normalizeCollectibleChecklist(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return {
+      title: "可收藏清单",
+      items: normalizeStringArray(value),
+    };
+  }
+  return {
+    title: normalizeText(pickValue(value, ["title", "name", "标题"])) || "可收藏清单",
+    items: normalizeStringArray(pickValue(value, ["items", "list", "checks", "清单"])),
+  };
+}
+
 function normalizeOriginalDraftPayload(value: unknown): unknown {
   if (!isRecord(value)) {
     return value;
@@ -1114,6 +1479,121 @@ function ensureDefaultBannedExpressions(expressions: string[]): string[] {
   return Array.from(new Set([...expressions, "再不学就淘汰", "逆天改命", "加微信领取", "训练营报名", "课程优惠"]));
 }
 
+function ensureDefaultEditorialBoardPlan(plan: EditorialBoardPlan): EditorialBoardPlan {
+  const defaultAgents = [
+    {
+      name: "主编 Agent",
+      role: "定调",
+      brief: "明确主读者、核心矛盾和文章可被记住的一句话判断。",
+      directives: ["选一个主读者，不同时讨好所有人", "全文保持工程判断，不卖焦虑"],
+      riskFlags: [],
+      status: "ok" as const,
+    },
+    {
+      name: "开头 Agent",
+      role: "首屏钩子",
+      brief: "把前 300 字改成真实技术人愿意继续读的场景和判断。",
+      directives: ["不用假事故", "第一屏给出为什么现在值得读"],
+      riskFlags: [],
+      status: "ok" as const,
+    },
+    {
+      name: "节奏 Agent",
+      role: "段落推进",
+      brief: "压短段落，保证每个小标题都有信息增量。",
+      directives: ["避免连续长段", "每节都有转折或判断"],
+      riskFlags: [],
+      status: "ok" as const,
+    },
+    {
+      name: "排版 Agent",
+      role: "微信公众号版式",
+      brief: "安排 h2、blockquote、列表、留白和重点句。",
+      directives: ["重点判断用 blockquote", "工程框架用列表"],
+      riskFlags: [],
+      status: "ok" as const,
+    },
+    {
+      name: "图片插入 Agent",
+      role: "配图位置",
+      brief: "给出首图和解释图的 brief，不编造真实截图。",
+      directives: ["正文中放 figure 占位", "caption 说明图的阅读作用"],
+      riskFlags: [],
+      status: "ok" as const,
+    },
+    {
+      name: "可收藏清单 Agent",
+      role: "收藏价值",
+      brief: "沉淀一组读者能直接拿走的工程检查项。",
+      directives: ["清单必须具体", "避免泛泛鸡汤"],
+      riskFlags: [],
+      status: "ok" as const,
+    },
+    {
+      name: "审稿 Agent",
+      role: "发布前质检",
+      brief: "核验事实、删 CTA、删假场景、打分并重写弱段。",
+      directives: ["低于 85 分必须指出改法", "不确定事实改成边界表述"],
+      riskFlags: [],
+      status: "ok" as const,
+    },
+  ];
+  const agentPasses = mergeAgentPasses(plan.agentPasses, defaultAgents);
+  const imageBriefs = plan.imageBriefs.length > 0 ? plan.imageBriefs.slice(0, 6) : defaultImageBriefs();
+  const checklistItems =
+    plan.collectibleChecklist.items.length > 0
+      ? plan.collectibleChecklist.items.slice(0, 10)
+      : ["这篇文章的核心判断是什么", "有哪些事实来自参考文章", "哪些细节必须人工核验", "读者可以照着做的下一步是什么"];
+  return {
+    ...plan,
+    strategyId: EDITORIAL_BOARD_STRATEGY_ID,
+    strategyName: plan.strategyName || "策略一：编辑部流水线",
+    targetScore: plan.targetScore > 0 ? plan.targetScore : 86,
+    editorInChiefBrief: plan.editorInChiefBrief || "用主编视角把选题压成一个清晰主张：技术文章要有工程判断、读者入口和可收藏价值。",
+    agentPasses,
+    titleAngles: plan.titleAngles.length > 0 ? plan.titleAngles.slice(0, 8) : ["反常识判断", "工程失败模式", "面试可用框架", "源码/机制解读", "项目落地清单"],
+    openingOptions: plan.openingOptions.length > 0 ? plan.openingOptions.slice(0, 6) : ["从工程师真实卡点开头", "从面试问题开头", "从一次工具链升级后的判断开头"],
+    rhythmPlan: plan.rhythmPlan.length > 0 ? plan.rhythmPlan.slice(0, 10) : ["首屏给冲突", "第二节给判断", "中段拆机制", "尾段给可执行清单"],
+    layoutDirectives: plan.layoutDirectives.length > 0 ? plan.layoutDirectives.slice(0, 10) : ["每个 h2 有信息量", "强判断用 blockquote", "检查项用 ul/li", "配图用 figure/figcaption 占位"],
+    imageBriefs,
+    collectibleChecklist: {
+      title: plan.collectibleChecklist.title || "可收藏清单",
+      items: checklistItems,
+    },
+    reviewRubric:
+      plan.reviewRubric.length > 0
+        ? plan.reviewRubric.slice(0, 10)
+        : ["事实是否有边界", "开头是否有真实读者入口", "节奏是否像公众号而非技术文档", "是否无销售 CTA", "是否有可收藏清单"],
+  };
+}
+
+function mergeAgentPasses(current: EditorialBoardPlan["agentPasses"], defaults: EditorialBoardPlan["agentPasses"]) {
+  const result = [...current.filter((pass) => pass.name.trim())];
+  for (const item of defaults) {
+    if (!result.some((pass) => pass.name.includes(item.name.replace(" Agent", "")))) {
+      result.push(item);
+    }
+  }
+  return result.slice(0, 12);
+}
+
+function defaultImageBriefs(): ProfessionalImageBrief[] {
+  return [
+    {
+      role: "hero",
+      prompt: "一张面向 AI 工程师的公众号首图，展示模型、工具调用、状态机和代码工作流连接成一条工程链路，干净克制，适合技术公众号。",
+      alt: "AI 工程工作流首图",
+      caption: "这篇文章讨论的不是单点模型能力，而是一整套工程工作流。",
+    },
+    {
+      role: "explanation",
+      prompt: "一张简洁架构图风格插画，表现 Agent 从任务拆解、工具权限、状态记录到评估反馈的闭环。",
+      alt: "Agent 工程闭环示意",
+      caption: "把 Agent 写进生产流程，关键是把失败和恢复也设计进去。",
+    },
+  ];
+}
+
 function toBlueprintPrompt(blueprint: WritingBlueprint) {
   return {
     name: blueprint.name,
@@ -1122,6 +1602,45 @@ function toBlueprintPrompt(blueprint: WritingBlueprint) {
     toneRules: blueprint.toneRules,
     bannedExpressions: blueprint.bannedExpressions,
   };
+}
+
+function toEditorialBoardPlanPrompt(plan: EditorialBoardPlan) {
+  return {
+    strategyId: plan.strategyId,
+    strategyName: plan.strategyName,
+    targetScore: plan.targetScore,
+    editorInChiefBrief: plan.editorInChiefBrief,
+    agentPasses: plan.agentPasses,
+    titleAngles: plan.titleAngles,
+    openingOptions: plan.openingOptions,
+    rhythmPlan: plan.rhythmPlan,
+    layoutDirectives: plan.layoutDirectives,
+    imageBriefs: plan.imageBriefs,
+    collectibleChecklist: plan.collectibleChecklist,
+    reviewRubric: plan.reviewRubric,
+  };
+}
+
+function normalizeWritingStrategyId(value: WritingStrategyId | string | undefined): WritingStrategyId {
+  return value === EDITORIAL_BOARD_STRATEGY_ID ? EDITORIAL_BOARD_STRATEGY_ID : "default";
+}
+
+function createDraftGenerationNotes(input: {
+  strategyId: WritingStrategyId;
+  technicalBrief: WritingTechnicalBrief;
+  editorialBoardPlan: EditorialBoardPlan | null;
+  review: DraftReview;
+  warnings: SourceReuseWarning[];
+}): string {
+  const lines = [
+    `生成策略：${input.strategyId === EDITORIAL_BOARD_STRATEGY_ID ? "策略一：编辑部流水线" : "默认写作链路"}`,
+    `审稿分：${input.review.score}`,
+    input.review.revisionSummary ? `审稿摘要：${input.review.revisionSummary}` : "",
+    input.technicalBrief.coreClaim ? `核心判断：${input.technicalBrief.coreClaim}` : "",
+    input.editorialBoardPlan?.editorInChiefBrief ? `主编定调：${input.editorialBoardPlan.editorInChiefBrief}` : "",
+    input.warnings.length > 0 ? `相似度提醒：${input.warnings.length} 处长句需人工改写` : "",
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 function uniqueArticles(articles: Article[]): Article[] {

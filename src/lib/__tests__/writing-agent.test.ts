@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createEditorialBoardPlanRequest,
   createOriginalDraftRequest,
   createReviewAiSettings,
   createTechnicalBriefRequest,
   createWritingStructureRequest,
+  EDITORIAL_BOARD_STRATEGY_ID,
   ensureWritingStructureRuns,
   findSourceReuseWarnings,
+  generateEditorialBoardPlan,
   generateOriginalDraftFromTopic,
   generateWritingBlueprint,
+  parseEditorialBoardPlanResponse,
   parseDraftReviewResponse,
   parseOriginalDraftResponse,
   parseTechnicalBriefResponse,
@@ -193,6 +197,38 @@ describe("writing structure agent", () => {
     expect(prompt).toContain("sourceBoundaries");
   });
 
+  it("builds strategy one editorial board prompts with specialized agents", () => {
+    const request = createEditorialBoardPlanRequest({
+      topic: "OpenAI 大神教你如何榨干 Codex",
+      articles: [article],
+      channel: "wechat",
+      structureRuns: [structureRun],
+      technicalBrief: {
+        targetReader: "想用 Codex 提升工程效率的后端工程师",
+        topicJudgment: "从工具试用转向工程工作流。",
+        coreClaim: "真正的差距不是会不会打开 Codex，而是能不能把它变成可复用流程。",
+        verifiedFacts: ["参考文章讨论工具权限和状态管理"],
+        sourceBoundaries: ["不要编造 OpenAI 内部最佳实践"],
+        sectionBrief: [{ title: "工作流", mustSay: ["CLAUDE.md/Codex 指令资产"], evidence: ["参考文章"], avoid: ["卖课 CTA"] }],
+        riskFlags: ["标题党风险"],
+        styleInstructions: ["公众号短段落"],
+      },
+      model: "deepseek-v4-pro",
+    });
+    const prompt = request.messages.map((message) => message.content).join("\n");
+
+    expect(prompt).toContain("策略一：编辑部流水线");
+    expect(prompt).toContain("主编 Agent");
+    expect(prompt).toContain("开头 Agent");
+    expect(prompt).toContain("节奏 Agent");
+    expect(prompt).toContain("排版 Agent");
+    expect(prompt).toContain("图片插入 Agent");
+    expect(prompt).toContain("可收藏清单 Agent");
+    expect(prompt).toContain("审稿 Agent");
+    expect(prompt).toContain("不洗稿");
+    expect(prompt).toContain("销售 CTA");
+  });
+
   it("parses technical briefs and draft reviews", () => {
     const brief = parseTechnicalBriefResponse({
       目标读者: "Agent 平台工程师",
@@ -232,6 +268,53 @@ describe("writing structure agent", () => {
     );
     expect(review.score).toBe(83);
     expect(review.revisedDraft?.title).toBe("Harness 决定 Agent 下限");
+  });
+
+  it("parses editorial board plans and fills missing agent roles", async () => {
+    const plan = parseEditorialBoardPlanResponse({
+      plan: {
+        strategyName: "策略一：编辑部流水线",
+        targetScore: 88,
+        主编定调: "写给准备把 Agent 工具链做成工作流的工程师。",
+        编辑部分工: [{ 名称: "主编 Agent", 职责: "定调", 任务: "压出核心判断", 指令: ["不卖焦虑"] }],
+        标题方向: ["大神方法", "工程工作流"],
+        开头方案: ["从面试官问 CLAUDE.md 开始"],
+        节奏计划: ["首屏冲突", "中段拆机制"],
+        排版要求: ["重点句用 blockquote"],
+        图片方案: [{ role: "hero", prompt: "Codex 工作流架构图", alt: "工作流架构图", caption: "从提示词到验证闭环" }],
+        可收藏清单: { 标题: "Codex 工作流检查表", 清单: ["是否有项目上下文", "是否有验收命令"] },
+        审稿标准: ["无销售 CTA", "无假事故"],
+      },
+    });
+
+    expect(plan.strategyId).toBe(EDITORIAL_BOARD_STRATEGY_ID);
+    expect(plan.targetScore).toBe(88);
+    expect(plan.agentPasses.some((agent) => agent.name.includes("图片插入"))).toBe(true);
+    expect(plan.collectibleChecklist.items).toContain("是否有项目上下文");
+
+    const generated = await generateEditorialBoardPlan({
+      topic: "Codex 工作流",
+      articles: [article],
+      structureRuns: [structureRun],
+      settings,
+      modelClient: async () =>
+        JSON.stringify({
+          strategyId: EDITORIAL_BOARD_STRATEGY_ID,
+          strategyName: "策略一：编辑部流水线",
+          targetScore: 87,
+          editorInChiefBrief: "把工具使用写成工程工作流。",
+          agentPasses: [{ name: "开头 Agent", role: "开头", brief: "首屏给冲突", directives: ["真实场景"], riskFlags: [], status: "ok" }],
+          titleAngles: ["Codex 工作流"],
+          openingOptions: ["从工程师的配置文件开场"],
+          rhythmPlan: ["开头", "拆解", "清单"],
+          layoutDirectives: ["figure 占位"],
+          imageBriefs: [{ role: "hero", prompt: "工作流首图", alt: "首图", caption: "工作流" }],
+          collectibleChecklist: { title: "收藏清单", items: ["项目上下文", "验收命令"] },
+          reviewRubric: ["不洗稿"],
+        }),
+    });
+    expect(generated.editorInChiefBrief).toContain("工程工作流");
+    expect(generated.agentPasses.some((agent) => agent.name.includes("审稿"))).toBe(true);
   });
 
   it("creates a draft and flags copied long source sentences", async () => {
@@ -340,6 +423,134 @@ describe("writing structure agent", () => {
     expect(modelClient).toHaveBeenNthCalledWith(2, expect.objectContaining({ model: "MiniMax-M2.7" }), expect.objectContaining({ model: "MiniMax-M2.7" }));
     expect(modelClient).toHaveBeenNthCalledWith(3, expect.objectContaining({ model: "deepseek-v4-pro" }), expect.objectContaining({ model: "deepseek-v4-pro" }));
     expect(draftStore.createDraft).toHaveBeenCalled();
+  });
+
+  it("runs strategy one through the editorial board before drafting and review", async () => {
+    const draftStore = {
+      createDraft: vi.fn(async (input) => ({
+        id: "draft_strategy_1",
+        title: input.title,
+        body: input.body,
+        notes: input.notes,
+        sourceAnalysisIds: input.sourceAnalysisIds,
+        sourceArticleIds: input.sourceArticleIds,
+        contentChannel: input.contentChannel,
+        publishStatus: input.publishStatus,
+        exportFormat: input.exportFormat,
+        wechatDraftStatus: "not_sent" as const,
+        createdAt: "now",
+        updatedAt: "now",
+      })),
+    };
+    const modelClient = vi
+      .fn()
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          targetReader: "想榨干 Codex 的工程师",
+          topicJudgment: "从工具尝鲜转向工程资产。",
+          coreClaim: "Codex 的上限来自上下文和验收闭环。",
+          verifiedFacts: ["参考文章讨论任务拆解和评估闭环"],
+          sourceBoundaries: ["不要编造 OpenAI 内部实践"],
+          sectionBrief: [{ title: "上下文", mustSay: ["维护项目上下文"], evidence: ["参考文章"], avoid: ["卖课"] }],
+          riskFlags: [],
+          styleInstructions: ["短段落"],
+        }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          strategyId: EDITORIAL_BOARD_STRATEGY_ID,
+          strategyName: "策略一：编辑部流水线",
+          targetScore: 88,
+          editorInChiefBrief: "这篇要写成第一篇定调稿，强调工程工作流而非工具崇拜。",
+          agentPasses: [
+            { name: "主编 Agent", role: "定调", brief: "给出核心判断", directives: ["不要洗稿"], riskFlags: [], status: "ok" },
+            { name: "图片插入 Agent", role: "配图", brief: "给出架构图", directives: ["figure 占位"], riskFlags: [], status: "ok" },
+          ],
+          titleAngles: ["大神方法", "工作流差距"],
+          openingOptions: ["从面试官问配置文件开场"],
+          rhythmPlan: ["首屏冲突", "中段拆解", "结尾清单"],
+          layoutDirectives: ["blockquote 强判断", "figure 占位"],
+          imageBriefs: [{ role: "hero", prompt: "Codex 工作流首图", alt: "首图", caption: "工作流首图" }],
+          collectibleChecklist: { title: "Codex 检查表", items: ["项目上下文", "验收命令"] },
+          reviewRubric: ["无销售 CTA"],
+        }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          title: "OpenAI 大神教你如何榨干 Codex",
+          deck: "差距不在会不会打开工具，而在工作流。",
+          readerProfile: "想提升工程效率的后端工程师",
+          coreClaim: "Codex 的上限来自上下文和验收闭环。",
+          titleOptions: ["OpenAI 大神教你如何榨干 Codex"],
+          bodyHtml:
+            "<h1>OpenAI 大神教你如何榨干 Codex</h1><blockquote>Codex 的上限来自上下文和验收闭环。</blockquote><figure><figcaption>工作流首图</figcaption></figure><h2>可收藏清单</h2><ul><li>项目上下文</li></ul>",
+          editorialScore: {
+            total: 86,
+            topic: 88,
+            readerFit: 86,
+            opening: 85,
+            viewpoint: 88,
+            evidence: 82,
+            pacing: 86,
+            wechatReadability: 87,
+            originality: 86,
+            notes: ["策略一落地"],
+            revisionPriority: [],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          score: 88,
+          passed: true,
+          factIssues: [],
+          fakeSceneIssues: [],
+          ctaIssues: [],
+          styleIssues: [],
+          compressionNotes: [],
+          revisionSummary: "已按策略一补足清单和配图占位。",
+          revisedDraft: {
+            title: "OpenAI 大神教你如何榨干 Codex",
+            deck: "差距不在会不会打开工具，而在工作流。",
+            readerProfile: "想提升工程效率的后端工程师",
+            coreClaim: "Codex 的上限来自上下文和验收闭环。",
+            titleOptions: ["OpenAI 大神教你如何榨干 Codex"],
+            bodyHtml:
+              "<h1>OpenAI 大神教你如何榨干 Codex</h1><blockquote>Codex 的上限来自上下文和验收闭环。</blockquote><figure><figcaption>工作流首图</figcaption></figure><h2>可收藏清单</h2><ul><li>项目上下文</li></ul>",
+            editorialScore: {
+              total: 88,
+              topic: 88,
+              readerFit: 88,
+              opening: 86,
+              viewpoint: 90,
+              evidence: 84,
+              pacing: 88,
+              wechatReadability: 90,
+              originality: 88,
+              notes: ["可发"],
+              revisionPriority: [],
+            },
+          },
+        }),
+      );
+
+    const result = await generateOriginalDraftFromTopic({
+      topic: "OpenAI 大神教你如何榨干 Codex",
+      articles: [article],
+      structureRuns: [structureRun],
+      strategyId: EDITORIAL_BOARD_STRATEGY_ID,
+      settings,
+      reviewSettings: createReviewAiSettings(settings),
+      draftStore,
+      modelClient,
+    });
+
+    expect(modelClient).toHaveBeenCalledTimes(4);
+    expect(result.editorialBoardPlan?.strategyId).toBe(EDITORIAL_BOARD_STRATEGY_ID);
+    expect(result.editorialBoardPlan?.collectibleChecklist.items).toContain("项目上下文");
+    expect(result.originalDraft.bodyHtml).toContain("figure");
+    expect(result.review.score).toBe(88);
+    expect(draftStore.createDraft).toHaveBeenCalledWith(expect.objectContaining({ notes: expect.stringContaining("策略一：编辑部流水线") }));
   });
 
   it("parses draft JSON when the model leaves raw newlines inside HTML strings", () => {

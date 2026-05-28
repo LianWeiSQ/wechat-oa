@@ -237,6 +237,56 @@ export function migrate(db: DatabaseSync): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS agent_strategies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      target_channel TEXT NOT NULL DEFAULT 'wechat',
+      default_model TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      modules_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_drafts (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      body_html TEXT NOT NULL,
+      topic TEXT NOT NULL DEFAULT '',
+      target_channel TEXT NOT NULL DEFAULT 'wechat',
+      source_article_ids_json TEXT NOT NULL DEFAULT '[]',
+      strategy_id TEXT NOT NULL DEFAULT '',
+      strategy_snapshot_json TEXT NOT NULL,
+      run_id TEXT,
+      review_json TEXT,
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'generated',
+      local_draft_id TEXT,
+      wechat_media_id TEXT,
+      error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (local_draft_id) REFERENCES drafts(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id TEXT PRIMARY KEY,
+      agent_draft_id TEXT,
+      strategy_id TEXT NOT NULL DEFAULT '',
+      strategy_snapshot_json TEXT NOT NULL,
+      topic TEXT NOT NULL DEFAULT '',
+      source_article_ids_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'running',
+      steps_json TEXT NOT NULL DEFAULT '[]',
+      model_metadata_json TEXT NOT NULL DEFAULT '{}',
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      finished_at TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (agent_draft_id) REFERENCES agent_drafts(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value_json TEXT NOT NULL,
@@ -255,6 +305,9 @@ export function migrate(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_content_agent_runs_article_id ON content_agent_runs(article_id);
     CREATE INDEX IF NOT EXISTS idx_writing_structure_runs_article_id ON writing_structure_runs(article_id);
     CREATE INDEX IF NOT EXISTS idx_writing_blueprints_updated_at ON writing_blueprints(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_strategies_updated_at ON agent_strategies(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_drafts_status_updated_at ON agent_drafts(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_draft_created_at ON agent_runs(agent_draft_id, created_at DESC);
   `);
   ensureColumn(db, "articles", "source_type", "TEXT NOT NULL DEFAULT 'wechat'");
   ensureColumn(db, "articles", "source_name", "TEXT NOT NULL DEFAULT ''");

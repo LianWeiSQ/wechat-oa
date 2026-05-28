@@ -1,5 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { stripHtml } from "@/lib/analysis";
+import {
+  DEFAULT_AGENT_STRATEGIES,
+  normalizeDraftStatus,
+  normalizeModules,
+  normalizeStrategyStatus,
+  normalizeTargetChannel,
+  type AgentDraftCreateInput,
+  type AgentDraftUpdateInput,
+  type AgentRunCreateInput,
+  type AgentRunUpdateInput,
+  type AgentStrategyCreateInput,
+  type AgentStrategyUpdateInput,
+} from "@/lib/agent-store";
 import { normalizeArticleCategory, suggestArticleCategory } from "@/lib/article-categories";
 import { createId, nowIso } from "@/lib/ids";
 import {
@@ -23,6 +36,12 @@ import type {
 import { getSupabaseConfig, getSupabaseServiceClient } from "@/lib/supabase";
 import type {
   AiSettings,
+  AgentDraft,
+  AgentDraftStatus,
+  AgentModelMetadata,
+  AgentRun,
+  AgentRunStep,
+  AgentStrategy,
   AnalysisRun,
   Article,
   ArticleInput,
@@ -61,8 +80,10 @@ export function createSupabaseStores(client = getSupabaseServiceClient()) {
   const draftImageStore = createSupabaseDraftImageStore(client, workspaceId);
   const contentAgentStore = createSupabaseContentAgentStore(client, workspaceId);
   const writingStore = createSupabaseWritingStore(client, workspaceId);
+  const agentStore = createSupabaseAgentStore(client, workspaceId);
 
   return {
+    agentStore,
     articleStore,
     contentAgentStore,
     draftStore,
@@ -418,6 +439,330 @@ function createSupabaseWritingStore(client: SupabaseClient, workspaceId: string)
       return data ? mapWritingBlueprint(data as JsonRecord) : null;
     },
   };
+}
+
+function createSupabaseAgentStore(client: SupabaseClient, workspaceId: string) {
+  const store = {
+    async ensureDefaultStrategies(): Promise<AgentStrategy[]> {
+      const existing = await store.listStrategies();
+      if (existing.length > 0) {
+        return existing;
+      }
+      const timestamp = nowIso();
+      const rows = DEFAULT_AGENT_STRATEGIES.map((strategy) => ({
+        id: strategy.id,
+        workspace_id: workspaceId,
+        name: strategy.name,
+        description: strategy.description,
+        target_channel: strategy.targetChannel,
+        default_model: strategy.defaultModel,
+        status: strategy.status,
+        modules: strategy.modules,
+        created_at: timestamp,
+        updated_at: timestamp,
+      }));
+      const { error } = await client.from("agent_strategies").insert(rows);
+      assertNoError(error, "初始化 Agent 策略失败");
+      return store.listStrategies();
+    },
+
+    async listStrategies(): Promise<AgentStrategy[]> {
+      const { data, error } = await client
+        .from("agent_strategies")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .order("status", { ascending: true })
+        .order("updated_at", { ascending: false });
+      assertNoError(error, "读取 Agent 策略失败");
+      return ((data ?? []) as JsonRecord[]).map(mapAgentStrategy);
+    },
+
+    async getStrategy(id: string): Promise<AgentStrategy | null> {
+      const { data, error } = await client
+        .from("agent_strategies")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .eq("id", id)
+        .maybeSingle();
+      assertNoError(error, "读取 Agent 策略失败");
+      return data ? mapAgentStrategy(data as JsonRecord) : null;
+    },
+
+    async createStrategy(input: AgentStrategyCreateInput): Promise<AgentStrategy> {
+      const timestamp = nowIso();
+      const strategy: AgentStrategy = {
+        id: input.id?.trim() || createId("astrategy"),
+        name: input.name.trim() || "未命名策略",
+        description: input.description?.trim() ?? "",
+        targetChannel: normalizeTargetChannel(input.targetChannel),
+        defaultModel: input.defaultModel?.trim() ?? "",
+        status: normalizeStrategyStatus(input.status),
+        modules: normalizeModules(input.modules ?? []),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      const { error } = await client.from("agent_strategies").insert({
+        id: strategy.id,
+        workspace_id: workspaceId,
+        name: strategy.name,
+        description: strategy.description,
+        target_channel: strategy.targetChannel,
+        default_model: strategy.defaultModel,
+        status: strategy.status,
+        modules: strategy.modules,
+        created_at: strategy.createdAt,
+        updated_at: strategy.updatedAt,
+      });
+      assertNoError(error, "保存 Agent 策略失败");
+      return strategy;
+    },
+
+    async updateStrategy(id: string, input: AgentStrategyUpdateInput): Promise<AgentStrategy | null> {
+      const existing = await store.getStrategy(id);
+      if (!existing) {
+        return null;
+      }
+      const updated: AgentStrategy = {
+        ...existing,
+        name: input.name?.trim() || existing.name,
+        description: input.description === undefined ? existing.description : input.description.trim(),
+        targetChannel: input.targetChannel === undefined ? existing.targetChannel : normalizeTargetChannel(input.targetChannel),
+        defaultModel: input.defaultModel === undefined ? existing.defaultModel : input.defaultModel.trim(),
+        status: input.status === undefined ? existing.status : normalizeStrategyStatus(input.status),
+        modules: input.modules === undefined ? existing.modules : normalizeModules(input.modules),
+        updatedAt: nowIso(),
+      };
+      const { error } = await client
+        .from("agent_strategies")
+        .update({
+          name: updated.name,
+          description: updated.description,
+          target_channel: updated.targetChannel,
+          default_model: updated.defaultModel,
+          status: updated.status,
+          modules: updated.modules,
+          updated_at: updated.updatedAt,
+        })
+        .eq("workspace_id", workspaceId)
+        .eq("id", id);
+      assertNoError(error, "更新 Agent 策略失败");
+      return store.getStrategy(id);
+    },
+
+    async deleteStrategy(id: string): Promise<boolean> {
+      const { count, error } = await client
+        .from("agent_strategies")
+        .delete({ count: "exact" })
+        .eq("workspace_id", workspaceId)
+        .eq("id", id);
+      assertNoError(error, "删除 Agent 策略失败");
+      return (count ?? 0) > 0;
+    },
+
+    async listDrafts(query: { status?: AgentDraftStatus | "all" } = {}): Promise<AgentDraft[]> {
+      const { data, error } = await client
+        .from("agent_drafts")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .order("updated_at", { ascending: false });
+      assertNoError(error, "读取 Agent 草稿失败");
+      return ((data ?? []) as JsonRecord[])
+        .map(mapAgentDraft)
+        .filter((draft) => !query.status || query.status === "all" || draft.status === query.status);
+    },
+
+    async getDraft(id: string): Promise<AgentDraft | null> {
+      const { data, error } = await client
+        .from("agent_drafts")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .eq("id", id)
+        .maybeSingle();
+      assertNoError(error, "读取 Agent 草稿失败");
+      return data ? mapAgentDraft(data as JsonRecord) : null;
+    },
+
+    async createDraft(input: AgentDraftCreateInput): Promise<AgentDraft> {
+      const timestamp = nowIso();
+      const draft: AgentDraft = {
+        id: createId("adraft"),
+        title: input.title.trim() || "未命名 Agent 草稿",
+        bodyHtml: input.bodyHtml.trim(),
+        topic: input.topic.trim(),
+        targetChannel: normalizeTargetChannel(input.targetChannel),
+        sourceArticleIds: normalizeIds(input.sourceArticleIds),
+        strategyId: input.strategyId.trim(),
+        strategySnapshot: input.strategySnapshot,
+        runId: input.runId?.trim() || undefined,
+        review: input.review ?? null,
+        warnings: input.warnings ?? [],
+        status: normalizeDraftStatus(input.status),
+        localDraftId: input.localDraftId?.trim() || undefined,
+        wechatMediaId: input.wechatMediaId?.trim() || undefined,
+        error: input.error?.trim() ?? "",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      const { error } = await client.from("agent_drafts").insert({
+        id: draft.id,
+        workspace_id: workspaceId,
+        title: draft.title,
+        body_html: draft.bodyHtml,
+        topic: draft.topic,
+        target_channel: draft.targetChannel,
+        source_article_ids: draft.sourceArticleIds,
+        strategy_id: draft.strategyId,
+        strategy_snapshot: draft.strategySnapshot,
+        run_id: draft.runId ?? null,
+        review: draft.review,
+        warnings: draft.warnings,
+        status: draft.status,
+        local_draft_id: draft.localDraftId ?? null,
+        wechat_media_id: draft.wechatMediaId ?? null,
+        error: draft.error,
+        created_at: draft.createdAt,
+        updated_at: draft.updatedAt,
+      });
+      assertNoError(error, "保存 Agent 草稿失败");
+      return draft;
+    },
+
+    async updateDraft(id: string, input: AgentDraftUpdateInput): Promise<AgentDraft | null> {
+      const existing = await store.getDraft(id);
+      if (!existing) {
+        return null;
+      }
+      const updated: AgentDraft = {
+        ...existing,
+        title: input.title?.trim() || existing.title,
+        bodyHtml: input.bodyHtml === undefined ? existing.bodyHtml : input.bodyHtml.trim(),
+        topic: input.topic === undefined ? existing.topic : input.topic.trim(),
+        targetChannel: input.targetChannel === undefined ? existing.targetChannel : normalizeTargetChannel(input.targetChannel),
+        sourceArticleIds: input.sourceArticleIds === undefined ? existing.sourceArticleIds : normalizeIds(input.sourceArticleIds),
+        strategyId: input.strategyId === undefined ? existing.strategyId : input.strategyId.trim(),
+        strategySnapshot: input.strategySnapshot ?? existing.strategySnapshot,
+        runId: input.runId === undefined ? existing.runId : input.runId?.trim() || undefined,
+        review: input.review === undefined ? existing.review : input.review ?? null,
+        warnings: input.warnings === undefined ? existing.warnings : input.warnings,
+        status: input.status === undefined ? existing.status : normalizeDraftStatus(input.status),
+        localDraftId: input.localDraftId === undefined ? existing.localDraftId : input.localDraftId?.trim() || undefined,
+        wechatMediaId: input.wechatMediaId === undefined ? existing.wechatMediaId : input.wechatMediaId?.trim() || undefined,
+        error: input.error === undefined ? existing.error : input.error.trim(),
+        updatedAt: nowIso(),
+      };
+      const { error } = await client
+        .from("agent_drafts")
+        .update({
+          title: updated.title,
+          body_html: updated.bodyHtml,
+          topic: updated.topic,
+          target_channel: updated.targetChannel,
+          source_article_ids: updated.sourceArticleIds,
+          strategy_id: updated.strategyId,
+          strategy_snapshot: updated.strategySnapshot,
+          run_id: updated.runId ?? null,
+          review: updated.review,
+          warnings: updated.warnings,
+          status: updated.status,
+          local_draft_id: updated.localDraftId ?? null,
+          wechat_media_id: updated.wechatMediaId ?? null,
+          error: updated.error,
+          updated_at: updated.updatedAt,
+        })
+        .eq("workspace_id", workspaceId)
+        .eq("id", id);
+      assertNoError(error, "更新 Agent 草稿失败");
+      return store.getDraft(id);
+    },
+
+    async createRun(input: AgentRunCreateInput): Promise<AgentRun> {
+      const timestamp = nowIso();
+      const run: AgentRun = {
+        id: input.id?.trim() || createId("arun"),
+        agentDraftId: input.agentDraftId?.trim() || undefined,
+        strategyId: input.strategyId.trim(),
+        strategySnapshot: input.strategySnapshot,
+        topic: input.topic.trim(),
+        sourceArticleIds: normalizeIds(input.sourceArticleIds),
+        status: input.status === "completed" || input.status === "failed" ? input.status : "running",
+        steps: input.steps ?? [],
+        modelMetadata: {
+          provider: input.modelMetadata.provider?.trim() ?? "",
+          model: input.modelMetadata.model?.trim() ?? "",
+        },
+        warnings: input.warnings ?? [],
+        error: input.error?.trim() ?? "",
+        createdAt: timestamp,
+        finishedAt: input.finishedAt?.trim() ?? "",
+      };
+      const { error } = await client.from("agent_runs").insert({
+        id: run.id,
+        workspace_id: workspaceId,
+        agent_draft_id: run.agentDraftId ?? null,
+        strategy_id: run.strategyId,
+        strategy_snapshot: run.strategySnapshot,
+        topic: run.topic,
+        source_article_ids: run.sourceArticleIds,
+        status: run.status,
+        steps: run.steps,
+        model_metadata: run.modelMetadata,
+        warnings: run.warnings,
+        error: run.error,
+        created_at: run.createdAt,
+        finished_at: run.finishedAt,
+      });
+      assertNoError(error, "保存 Agent 运行记录失败");
+      return run;
+    },
+
+    async updateRun(id: string, input: AgentRunUpdateInput): Promise<AgentRun | null> {
+      const existing = await store.getRun(id);
+      if (!existing) {
+        return null;
+      }
+      const { error } = await client
+        .from("agent_runs")
+        .update({
+          agent_draft_id: input.agentDraftId === undefined ? existing.agentDraftId ?? null : input.agentDraftId?.trim() || null,
+          status: input.status ?? existing.status,
+          steps: input.steps ?? existing.steps,
+          warnings: input.warnings ?? existing.warnings,
+          error: input.error === undefined ? existing.error : input.error.trim(),
+          finished_at: input.finishedAt === undefined ? existing.finishedAt : input.finishedAt.trim(),
+        })
+        .eq("workspace_id", workspaceId)
+        .eq("id", id);
+      assertNoError(error, "更新 Agent 运行记录失败");
+      return store.getRun(id);
+    },
+
+    async getRun(id: string): Promise<AgentRun | null> {
+      const { data, error } = await client
+        .from("agent_runs")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .eq("id", id)
+        .maybeSingle();
+      assertNoError(error, "读取 Agent 运行记录失败");
+      return data ? mapAgentRun(data as JsonRecord) : null;
+    },
+
+    async listRuns(agentDraftId?: string): Promise<AgentRun[]> {
+      let query = client
+        .from("agent_runs")
+        .select("*")
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false });
+      if (agentDraftId) {
+        query = query.eq("agent_draft_id", agentDraftId);
+      }
+      const { data, error } = await query;
+      assertNoError(error, "读取 Agent 运行记录失败");
+      return ((data ?? []) as JsonRecord[]).map(mapAgentRun);
+    },
+  };
+
+  return store;
 }
 
 function createSupabaseDraftStore(client: SupabaseClient, workspaceId: string) {
@@ -1237,6 +1582,60 @@ function mapWritingBlueprint(row: JsonRecord): WritingBlueprint {
   };
 }
 
+function mapAgentStrategy(row: JsonRecord): AgentStrategy {
+  return {
+    id: stringValue(row.id),
+    name: stringValue(row.name),
+    description: stringValue(row.description),
+    targetChannel: normalizeTargetChannel(row.target_channel),
+    defaultModel: stringValue(row.default_model),
+    status: normalizeStrategyStatus(row.status),
+    modules: normalizeModules(arrayValue<AgentStrategy["modules"][number]>(row.modules)),
+    createdAt: stringValue(row.created_at),
+    updatedAt: stringValue(row.updated_at),
+  };
+}
+
+function mapAgentDraft(row: JsonRecord): AgentDraft {
+  return {
+    id: stringValue(row.id),
+    title: stringValue(row.title),
+    bodyHtml: stringValue(row.body_html),
+    topic: stringValue(row.topic),
+    targetChannel: normalizeTargetChannel(row.target_channel),
+    sourceArticleIds: arrayValue<string>(row.source_article_ids),
+    strategyId: stringValue(row.strategy_id),
+    strategySnapshot: normalizeAgentStrategySnapshot(row.strategy_snapshot),
+    runId: stringValue(row.run_id) || undefined,
+    review: isRecord(row.review) ? (row.review as AgentDraft["review"]) : null,
+    warnings: arrayValue<AgentDraft["warnings"][number]>(row.warnings),
+    status: normalizeDraftStatus(row.status),
+    localDraftId: stringValue(row.local_draft_id) || undefined,
+    wechatMediaId: stringValue(row.wechat_media_id) || undefined,
+    error: stringValue(row.error),
+    createdAt: stringValue(row.created_at),
+    updatedAt: stringValue(row.updated_at),
+  };
+}
+
+function mapAgentRun(row: JsonRecord): AgentRun {
+  return {
+    id: stringValue(row.id),
+    agentDraftId: stringValue(row.agent_draft_id) || undefined,
+    strategyId: stringValue(row.strategy_id),
+    strategySnapshot: normalizeAgentStrategySnapshot(row.strategy_snapshot),
+    topic: stringValue(row.topic),
+    sourceArticleIds: arrayValue<string>(row.source_article_ids),
+    status: normalizeAgentRunStatus(row.status),
+    steps: arrayValue<AgentRunStep>(row.steps),
+    modelMetadata: objectValue(row.model_metadata) as AgentModelMetadata,
+    warnings: arrayValue<AgentDraft["warnings"][number]>(row.warnings),
+    error: stringValue(row.error),
+    createdAt: stringValue(row.created_at),
+    finishedAt: stringValue(row.finished_at),
+  };
+}
+
 function mapDraft(row: JsonRecord): LocalDraft {
   return {
     id: stringValue(row.id),
@@ -1369,6 +1768,30 @@ function normalizeContentChannel(value: unknown): ContentChannel {
 
 function normalizePublishStatus(value: unknown): PublishStatus {
   return value === "queued" || value === "published" || value === "archived" ? value : "draft";
+}
+
+function normalizeAgentRunStatus(value: unknown): AgentRun["status"] {
+  if (value === "completed" || value === "failed") {
+    return value;
+  }
+  return "running";
+}
+
+function normalizeAgentStrategySnapshot(value: unknown): AgentStrategy {
+  if (!isRecord(value)) {
+    return DEFAULT_AGENT_STRATEGIES[0];
+  }
+  return {
+    id: stringValue(value.id) || DEFAULT_AGENT_STRATEGIES[0].id,
+    name: stringValue(value.name) || DEFAULT_AGENT_STRATEGIES[0].name,
+    description: stringValue(value.description),
+    targetChannel: normalizeTargetChannel(value.targetChannel ?? value.target_channel),
+    defaultModel: stringValue(value.defaultModel ?? value.default_model),
+    status: normalizeStrategyStatus(value.status),
+    modules: normalizeModules(arrayValue<AgentStrategy["modules"][number]>(value.modules)),
+    createdAt: stringValue(value.createdAt ?? value.created_at),
+    updatedAt: stringValue(value.updatedAt ?? value.updated_at),
+  };
 }
 
 function normalizeIds(values: string[]): string[] {

@@ -1,3 +1,4 @@
+import { createAgentStore } from "@/lib/agent-store";
 import { createArticleStore } from "@/lib/articles";
 import { createContentAgentStore } from "@/lib/content-agent";
 import { getAppDatabase } from "@/lib/db";
@@ -17,6 +18,7 @@ export function stores() {
   const db = getAppDatabase();
   return {
     articleStore: createArticleStore(db),
+    agentStore: createAgentStore(db),
     contentAgentStore: createContentAgentStore(db),
     draftStore: createDraftStore(db),
     scheduleStore: createScheduledArticleStore(db),

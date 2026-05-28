@@ -240,6 +240,37 @@ export type ProfessionalArticleDraft = {
   imageBriefs: ProfessionalImageBrief[];
 };
 
+export type WritingStrategyId = "default" | "editorial-board-v1";
+
+export type EditorialAgentPass = {
+  name: string;
+  role: string;
+  brief: string;
+  directives: string[];
+  riskFlags: string[];
+  status: "ok" | "warning";
+};
+
+export type CollectibleChecklist = {
+  title: string;
+  items: string[];
+};
+
+export type EditorialBoardPlan = {
+  strategyId: WritingStrategyId;
+  strategyName: string;
+  targetScore: number;
+  editorInChiefBrief: string;
+  agentPasses: EditorialAgentPass[];
+  titleAngles: string[];
+  openingOptions: string[];
+  rhythmPlan: string[];
+  layoutDirectives: string[];
+  imageBriefs: ProfessionalImageBrief[];
+  collectibleChecklist: CollectibleChecklist;
+  reviewRubric: string[];
+};
+
 export type WritingStructure = {
   titlePattern: string;
   openingHook: string;
@@ -344,6 +375,105 @@ export type DraftReview = {
   compressionNotes: string[];
   revisionSummary: string;
   revisedDraft?: OriginalArticleDraft;
+};
+
+export type AgentTargetChannel = ContentChannel;
+
+export type AgentStrategyStatus = "active" | "archived";
+
+export type AgentStrategyModuleRole =
+  | "editor_in_chief"
+  | "technical_brief"
+  | "opening"
+  | "pacing"
+  | "layout"
+  | "image"
+  | "checklist"
+  | "review"
+  | "writer"
+  | "custom";
+
+export type AgentStrategyModule = {
+  id: string;
+  name: string;
+  role: AgentStrategyModuleRole;
+  order: number;
+  model: string;
+  prompt: string;
+  enabled: boolean;
+};
+
+export type AgentStrategy = {
+  id: string;
+  name: string;
+  description: string;
+  targetChannel: AgentTargetChannel;
+  defaultModel: string;
+  status: AgentStrategyStatus;
+  modules: AgentStrategyModule[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentDraftStatus =
+  | "generated"
+  | "editing"
+  | "approved"
+  | "pushed_local"
+  | "pushed_wechat"
+  | "failed"
+  | "archived";
+
+export type AgentRunStatus = "running" | "completed" | "failed";
+
+export type AgentRunStep = {
+  moduleId: string;
+  moduleName: string;
+  role: AgentStrategyModuleRole;
+  status: "ok" | "warning" | "error";
+  message: string;
+  output?: string;
+};
+
+export type AgentModelMetadata = {
+  provider: string;
+  model: string;
+};
+
+export type AgentRun = {
+  id: string;
+  agentDraftId?: string;
+  strategyId: string;
+  strategySnapshot: AgentStrategy;
+  topic: string;
+  sourceArticleIds: string[];
+  status: AgentRunStatus;
+  steps: AgentRunStep[];
+  modelMetadata: AgentModelMetadata;
+  warnings: SourceReuseWarning[];
+  error: string;
+  createdAt: string;
+  finishedAt: string;
+};
+
+export type AgentDraft = {
+  id: string;
+  title: string;
+  bodyHtml: string;
+  topic: string;
+  targetChannel: AgentTargetChannel;
+  sourceArticleIds: string[];
+  strategyId: string;
+  strategySnapshot: AgentStrategy;
+  runId?: string;
+  review?: DraftReview | null;
+  warnings: SourceReuseWarning[];
+  status: AgentDraftStatus;
+  localDraftId?: string;
+  wechatMediaId?: string;
+  error: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type AiWireApi = "chat-completions" | "responses";

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { mkdtemp, readFile, rm } from "node:fs/promises";

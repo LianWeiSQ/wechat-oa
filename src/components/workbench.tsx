@@ -990,6 +990,15 @@ export function Workbench({
   const workspaceTitle = workspaceTitleLabel(activeWorkspace, activeContentChannel);
   const nextThemeMode = themeMode === "dark" ? "light" : "dark";
   const isLibraryEmptyState = activeWorkspace === "library" && !selectedArticle;
+  const wechatWorkspaceDrafts = localDrafts.filter((draft) => draftChannel(draft) === "wechat");
+  const xiaohongshuWorkspaceDrafts = localDrafts.filter((draft) => draftChannel(draft) === "xiaohongshu");
+  const wechatWorkspaceStats = buildDraftStats(wechatWorkspaceDrafts);
+  const wechatWorkspaceSyncStats = buildWeChatSyncStats(wechatWorkspaceDrafts);
+  const activeStrategyCount = agentStrategies.filter((strategy) => strategy.status !== "archived").length;
+  const enabledAgentModuleCount = agentStrategies.reduce(
+    (total, strategy) => total + strategy.modules.filter((module) => module.enabled).length,
+    0,
+  );
 
   function handleThemeModeToggle() {
     setThemeMode((current) => {
@@ -1026,6 +1035,9 @@ export function Workbench({
 
   return (
     <main className="studio-shell" data-theme={themeMode}>
+      <a className="skip-link" href="#workspace-content">
+        跳到工作区内容
+      </a>
       <header className="studio-topbar">
         <div className="brand-lockup">
           <div className="brand-mark">
@@ -1040,44 +1052,10 @@ export function Workbench({
         </div>
 
         <div className="topbar-actions">
-          <nav className="workspace-switch" aria-label="工作区">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveWorkspace("library");
-                setActiveModal(null);
-                setReaderDropdown(null);
-              }}
-              className={workspaceButtonClassName(activeWorkspace === "library")}
-            >
-              引用知识库
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                openContentWorkspace("wechat");
-              }}
-              className={workspaceButtonClassName(activeWorkspace === "wechat")}
-            >
-              微信公众号
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                openContentWorkspace("xiaohongshu");
-              }}
-              className={workspaceButtonClassName(activeWorkspace === "xiaohongshu")}
-            >
-              小红书
-            </button>
-            <button
-              type="button"
-              onClick={openAgentWorkspace}
-              className={workspaceButtonClassName(activeWorkspace === "agent")}
-            >
-              Agent
-            </button>
-          </nav>
+          <Link href="/generate" className="topbar-generate-button">
+            <Sparkles className="h-4 w-4" />
+            生成中心
+          </Link>
           <button
             type="button"
             className="theme-toggle"
@@ -1093,7 +1071,54 @@ export function Workbench({
         </div>
       </header>
 
+      <section className="studio-command-strip" aria-label="工作台状态总览">
+        <div className="command-copy">
+          <span className="command-kicker">Content operations</span>
+          <h2>账号内容生产工作台</h2>
+          <p>把外部素材、平台草稿、Agent 写作和微信投递放在一个清楚的操作面里。</p>
+        </div>
+        <nav className="workspace-switch workspace-switch-cards" aria-label="工作区">
+          <WorkspaceCommandButton
+            active={activeWorkspace === "library"}
+            detail={`${favoriteCount} 篇收藏 · ${filteredArticles.length} 篇当前可见`}
+            label="引用知识库"
+            metric={`${articles.length} 篇`}
+            onClick={() => {
+              setActiveWorkspace("library");
+              setActiveModal(null);
+              setReaderDropdown(null);
+            }}
+          />
+          <WorkspaceCommandButton
+            active={activeWorkspace === "wechat"}
+            detail={`${wechatWorkspaceStats.queued} 篇待发布 · ${wechatWorkspaceSyncStats.sent} 篇已进微信`}
+            label="微信公众号"
+            metric={`${wechatWorkspaceDrafts.length} 篇`}
+            onClick={() => {
+              openContentWorkspace("wechat");
+            }}
+          />
+          <WorkspaceCommandButton
+            active={activeWorkspace === "xiaohongshu"}
+            detail="入口保留，等待平台流程接入"
+            label="小红书"
+            metric={`${xiaohongshuWorkspaceDrafts.length} 篇`}
+            onClick={() => {
+              openContentWorkspace("xiaohongshu");
+            }}
+          />
+          <WorkspaceCommandButton
+            active={activeWorkspace === "agent"}
+            detail={`${activeStrategyCount} 个策略 · ${enabledAgentModuleCount} 个启用模块`}
+            label="Agent"
+            metric={`${agentDrafts.length} 篇`}
+            onClick={openAgentWorkspace}
+          />
+        </nav>
+      </section>
+
       <div
+        id="workspace-content"
         className={`workspace-frame ${isContentWorkspace ? "workspace-frame-wechat" : "workspace-frame-reading"} ${
           activeWorkspace === "library" && !libraryRailOpen ? "workspace-frame-rail-collapsed" : ""
         }`}
@@ -1970,6 +1995,28 @@ function ContentDraftWorkbench({
   );
 }
 
+function WorkspaceCommandButton({
+  active,
+  detail,
+  label,
+  metric,
+  onClick,
+}: {
+  active: boolean;
+  detail: string;
+  label: string;
+  metric: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" aria-label={label} onClick={onClick} className={workspaceButtonClassName(active)}>
+      <span className="workspace-tab-label">{label}</span>
+      <strong>{metric}</strong>
+      <small>{detail}</small>
+    </button>
+  );
+}
+
 function DraftMetricCard({ label, value, detail }: { label: string; value: number; detail: string }) {
   return (
     <div className="content-draft-stat">
@@ -2178,8 +2225,42 @@ function AgentWorkspace({
   selectedAgentStrategy: AgentStrategy | null;
   selectedAgentStrategyId: string;
 }) {
+  const activeModules = selectedAgentStrategy?.modules.filter((module) => module.enabled).sort((left, right) => left.order - right.order) ?? [];
+  const generatedDraftCount = agentDrafts.filter((draft) => draft.status === "generated" || draft.status === "editing").length;
+  const readyDraftCount = agentDrafts.filter((draft) => draft.status === "approved" || draft.status === "pushed_local" || draft.status === "pushed_wechat").length;
+
   return (
     <section className="agent-workspace" aria-label="Agent 工作台">
+      <section className="agent-ops-overview" aria-label="Agent 状态总览">
+        <div className="agent-ops-copy">
+          <span className="command-kicker">Agent control room</span>
+          <h2>选择写作方式，观察每个 Agent 的工作状态</h2>
+          <p>这里把策略、工具链、引用素材和草稿池合成一个独立空间。你可以换策略，也可以直接编辑模块 prompt 和模型。</p>
+        </div>
+        <div className="agent-ops-metrics">
+          <DraftMetricCard label="策略" value={agentStrategies.length} detail={`${activeModules.length} 个模块正在参与当前策略`} />
+          <DraftMetricCard label="引用素材" value={agentReferenceIds.length} detail={`从 ${articles.length} 篇知识库里选择`} />
+          <DraftMetricCard label="待处理草稿" value={generatedDraftCount} detail={`${readyDraftCount} 篇已确认或已推送`} />
+        </div>
+        <div className="agent-module-status-grid" aria-label="当前 Agent 模块状态">
+          {activeModules.map((module) => (
+            <article key={module.id} className="agent-module-status-card">
+              <div>
+                <span className="agent-status-pill agent-status-pill-ready">启用</span>
+                <strong>{module.name}</strong>
+                <small>{agentRoleLabel(module.role)} · {module.model || selectedAgentStrategy?.defaultModel || "系统默认模型"}</small>
+              </div>
+              <p>{clipText(module.prompt, 92)}</p>
+            </article>
+          ))}
+          {activeModules.length === 0 ? (
+            <div className="empty-list">
+              <div className="empty-list-title">当前策略没有启用模块</div>
+              <p>在策略管理里打开至少一个模块后再运行 Agent。</p>
+            </div>
+          ) : null}
+        </div>
+      </section>
       <AgentStrategyManagement
         key={selectedAgentStrategy?.id ?? "no-agent-strategy"}
         busy={busy}
@@ -3112,6 +3193,10 @@ function agentDraftStatusLabel(status: AgentDraftStatus): string {
     return "归档";
   }
   return "已生成";
+}
+
+function agentRoleLabel(role: AgentStrategyModuleRole): string {
+  return AGENT_ROLE_OPTIONS.find((option) => option.value === role)?.label ?? "自定义";
 }
 
 function buildDraftStats(drafts: LocalDraft[]): Record<PublishStatus, number> {

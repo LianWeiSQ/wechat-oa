@@ -5,10 +5,12 @@ import { ANALYSIS_TEMPLATES } from "@/lib/analysis";
 import { DEFAULT_THEME_MODE, THEME_COOKIE_NAME, normalizeThemeMode } from "@/lib/theme";
 
 export default async function Home() {
-  const { articleStore, draftStore } = stores();
-  const [articles, drafts, cookieStore] = await Promise.all([
+  const { agentStore, articleStore, draftStore } = stores();
+  const [articles, drafts, agentStrategies, agentDrafts, cookieStore] = await Promise.all([
     articleStore.listArticles(),
     draftStore.listDrafts(),
+    agentStore.ensureDefaultStrategies(),
+    agentStore.listDrafts(),
     cookies(),
   ]);
   const initialThemeMode = normalizeThemeMode(cookieStore.get(THEME_COOKIE_NAME)?.value) ?? DEFAULT_THEME_MODE;
@@ -16,6 +18,8 @@ export default async function Home() {
   return (
     <Workbench
       initialArticles={articles}
+      initialAgentDrafts={agentDrafts}
+      initialAgentStrategies={agentStrategies}
       initialDrafts={drafts}
       templates={ANALYSIS_TEMPLATES}
       initialThemeMode={initialThemeMode}

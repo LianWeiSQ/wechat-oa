@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {
   AlertTriangle,
+  Archive,
   Brain,
   CheckCircle2,
   Database,
@@ -39,6 +40,11 @@ import { DEFAULT_THEME_MODE, THEME_COOKIE_NAME, THEME_STORAGE_KEY, normalizeThem
 import type {
   AnalysisRun,
   AnalysisTemplate,
+  AgentDraft,
+  AgentDraftStatus,
+  AgentStrategy,
+  AgentStrategyModule,
+  AgentStrategyModuleRole,
   Article,
   ArticleParseRun,
   ContentChannel,
@@ -50,6 +56,8 @@ import type { ThemeMode } from "@/lib/theme";
 
 type WorkbenchProps = {
   initialArticles: Article[];
+  initialAgentDrafts?: AgentDraft[];
+  initialAgentStrategies?: AgentStrategy[];
   initialDrafts?: LocalDraft[];
   templates: AnalysisTemplate[];
   initialAiSettings?: unknown;
@@ -63,10 +71,11 @@ type Notice = {
   text: string;
 };
 
-type Workspace = "library" | "wechat" | "xiaohongshu";
+type Workspace = "library" | "wechat" | "xiaohongshu" | "agent";
 type ImportMode = "url" | "manual";
 type ActiveModal = "analysis" | "import" | "edit" | "manage" | null;
 type ReaderDropdown = "actions" | "filters" | null;
+type DraftBoardFilter = "all" | PublishStatus;
 type SourceFilter = "all" | Article["sourceType"];
 type FavoriteFilter = "all" | "favorites";
 type ProjectFilter = "全部";
@@ -84,6 +93,11 @@ type DraftEditorState = {
   publishStatus: PublishStatus;
   plannedPublishAt: string;
 };
+type AgentDraftEditorState = {
+  title: string;
+  bodyHtml: string;
+  status: AgentDraftStatus;
+};
 
 const SUCCESS_NOTICE_DURATION_MS = 3000;
 const ALL_CATEGORIES = "全部";
@@ -93,14 +107,19 @@ const SEARCH_LOCALE = "zh-Hans-CN";
 
 export function Workbench({
   initialArticles,
+  initialAgentDrafts = [],
+  initialAgentStrategies = [],
   initialDrafts = [],
   templates,
   initialThemeMode = DEFAULT_THEME_MODE,
 }: WorkbenchProps) {
   const [articles, setArticles] = useState(initialArticles);
+  const [agentDrafts, setAgentDrafts] = useState(initialAgentDrafts);
+  const [agentStrategies, setAgentStrategies] = useState(initialAgentStrategies);
   const [localDrafts, setLocalDrafts] = useState(initialDrafts);
   const [selectedId, setSelectedId] = useState(initialArticles[0]?.id ?? "");
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("library");
+  const [draftBoardFilter, setDraftBoardFilter] = useState<DraftBoardFilter>("all");
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode() ?? initialThemeMode);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState(ALL_CATEGORIES);
@@ -121,9 +140,14 @@ export function Workbench({
   const [editDraft, setEditDraft] = useState({ title: "", category: "", sourceProject: "", content: "" });
   const editorRef = useRef<HTMLDivElement | null>(null);
   const [importFeedback, setImportFeedback] = useState<Notice | null>(null);
-  const initialSelectedDraft = firstPendingDraftForChannel(initialDrafts, "wechat");
+  const initialSelectedDraft = firstDraftForChannel(initialDrafts, "wechat", "all");
   const [selectedDraftId, setSelectedDraftId] = useState(initialSelectedDraft?.id ?? "");
   const [draftEditor, setDraftEditor] = useState<DraftEditorState>(() => draftToEditorState(initialSelectedDraft));
+  const [selectedAgentStrategyId, setSelectedAgentStrategyId] = useState(initialAgentStrategies[0]?.id ?? "");
+  const [agentTopic, setAgentTopic] = useState("");
+  const [agentReferenceIds, setAgentReferenceIds] = useState<string[]>(() => initialArticles.slice(0, 3).map((article) => article.id));
+  const [selectedAgentDraftId, setSelectedAgentDraftId] = useState(initialAgentDrafts[0]?.id ?? "");
+  const [agentDraftEditor, setAgentDraftEditor] = useState<AgentDraftEditorState>(() => agentDraftToEditorState(initialAgentDrafts[0] ?? null));
   const [notice, setNotice] = useState<Notice | null>({ type: "info", text: "账号文章系统已就绪" });
   const [busy, setBusy] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -236,13 +260,27 @@ export function Workbench({
     [activeContentChannel, localDrafts],
   );
 
-  const pendingChannelDrafts = useMemo(() => channelDrafts.filter(isPendingDraft), [channelDrafts]);
+  const visibleChannelDrafts = useMemo(
+    () => channelDrafts.filter((draft) => draftMatchesBoardFilter(draft, draftBoardFilter)),
+    [channelDrafts, draftBoardFilter],
+  );
 
   const channelStats = useMemo(() => buildDraftStats(channelDrafts), [channelDrafts]);
+  const wechatSyncStats = useMemo(() => buildWeChatSyncStats(channelDrafts), [channelDrafts]);
 
   const selectedLocalDraft = useMemo(
-    () => pendingChannelDrafts.find((draft) => draft.id === selectedDraftId) ?? pendingChannelDrafts[0] ?? null,
-    [pendingChannelDrafts, selectedDraftId],
+    () => visibleChannelDrafts.find((draft) => draft.id === selectedDraftId) ?? visibleChannelDrafts[0] ?? null,
+    [visibleChannelDrafts, selectedDraftId],
+  );
+
+  const selectedAgentStrategy = useMemo(
+    () => agentStrategies.find((strategy) => strategy.id === selectedAgentStrategyId) ?? agentStrategies[0] ?? null,
+    [agentStrategies, selectedAgentStrategyId],
+  );
+
+  const selectedAgentDraft = useMemo(
+    () => agentDrafts.find((draft) => draft.id === selectedAgentDraftId) ?? agentDrafts[0] ?? null,
+    [agentDrafts, selectedAgentDraftId],
   );
 
   useEffect(() => {
@@ -614,7 +652,7 @@ export function Workbench({
   }
 
   function handleDraftSelect(draftId: string) {
-    const draft = pendingChannelDrafts.find((item) => item.id === draftId) ?? null;
+    const draft = channelDrafts.find((item) => item.id === draftId) ?? null;
     selectDraftForEditing(draft);
   }
 
@@ -627,12 +665,11 @@ export function Workbench({
       };
       const updated = await patchLocalDraft(draft.id, payload);
       if (selectedDraftId === draft.id) {
-        if (publishStatus === "published" || publishStatus === "archived") {
-          const nextDraft = channelDrafts.find((item) => item.id !== draft.id && draftChannel(item) === draftChannel(draft) && isPendingDraft(item)) ?? null;
-          selectDraftForEditing(nextDraft);
-        } else {
-          selectDraftForEditing(updated);
-        }
+        const nextDrafts = upsertDraft(localDrafts, updated);
+        const nextDraft = draftMatchesBoardFilter(updated, draftBoardFilter)
+          ? updated
+          : firstDraftForChannel(nextDrafts, draftChannel(updated), draftBoardFilter);
+        selectDraftForEditing(nextDraft);
       }
       setNotice({ type: "ok", text: publishStatus === "published" ? `已标记发布：${draft.title}` : `已更新本地文章状态：${publishStatusLabel(publishStatus)}` });
     } catch (error) {
@@ -643,8 +680,8 @@ export function Workbench({
   }
 
   async function handleDraftReorder(draft: LocalDraft, direction: -1 | 1) {
-    const index = channelDrafts.findIndex((item) => item.id === draft.id);
-    const neighbor = channelDrafts[index + direction];
+    const index = visibleChannelDrafts.findIndex((item) => item.id === draft.id);
+    const neighbor = visibleChannelDrafts[index + direction];
     if (!neighbor) {
       return;
     }
@@ -693,6 +730,236 @@ export function Workbench({
     }
   }
 
+  async function handlePushLocalDraftToWeChat(draft: LocalDraft) {
+    if (draftChannel(draft) !== "wechat") {
+      setNotice({ type: "error", text: "只有微信公众号草稿可以推送到微信后台" });
+      return;
+    }
+    setBusy(`draft-wechat-${draft.id}`);
+    try {
+      const response = await fetch(`/api/drafts/${draft.id}/wechat-draft`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.message ?? data.error ?? "推送微信草稿箱失败");
+      }
+      if (data.draft) {
+        setLocalDrafts((current) => upsertDraft(current, data.draft));
+        if (selectedDraftId === draft.id) {
+          selectDraftForEditing(data.draft);
+        }
+      }
+      setNotice({ type: "ok", text: data.message ?? "已推送到微信草稿箱" });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "推送微信草稿箱失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function handleAgentReferenceToggle(articleId: string) {
+    setAgentReferenceIds((current) =>
+      current.includes(articleId) ? current.filter((id) => id !== articleId) : [...current, articleId],
+    );
+  }
+
+  async function handleAgentDraftGenerate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const topic = agentTopic.trim();
+    if (!topic) {
+      setNotice({ type: "error", text: "请输入本次要生成的选题" });
+      return;
+    }
+    if (agentReferenceIds.length === 0) {
+      setNotice({ type: "error", text: "至少选择一篇引用知识库文章作为参考" });
+      return;
+    }
+    if (!selectedAgentStrategy) {
+      setNotice({ type: "error", text: "请先选择一个 Agent 策略" });
+      return;
+    }
+
+    setBusy("agent-generate");
+    setNotice({ type: "info", text: `${selectedAgentStrategy.name} 正在分工、写稿和审稿` });
+    try {
+      const response = await fetch("/api/agent/drafts/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          topic,
+          referenceArticleIds: agentReferenceIds,
+          strategyId: selectedAgentStrategy.id,
+          targetChannel: selectedAgentStrategy.targetChannel,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { agentDraft?: AgentDraft; error?: string };
+      if (!response.ok || !data.agentDraft) {
+        throw new Error(data.error ?? "Agent 草稿生成失败");
+      }
+      setAgentDrafts((current) => upsertAgentDraft(current, data.agentDraft as AgentDraft));
+      selectAgentDraftForEditing(data.agentDraft);
+      setNotice({
+        type: data.agentDraft.warnings && data.agentDraft.warnings.length > 0 ? "info" : "ok",
+        text:
+          data.agentDraft.warnings && data.agentDraft.warnings.length > 0
+            ? `Agent 草稿已生成，但有 ${data.agentDraft.warnings.length} 条长句复用提醒`
+            : `Agent 草稿已生成：${data.agentDraft.title}`,
+      });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "Agent 草稿生成失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleAgentStrategySave(strategy: AgentStrategy) {
+    setBusy(`agent-strategy-${strategy.id}`);
+    try {
+      const response = await fetch(`/api/agent/strategies/${strategy.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(strategy),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.strategy) {
+        throw new Error(data.error ?? "Agent 策略保存失败");
+      }
+      setAgentStrategies((current) => upsertAgentStrategy(current, data.strategy));
+      setSelectedAgentStrategyId(data.strategy.id);
+      setNotice({ type: "ok", text: `已保存策略：${data.strategy.name}` });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "Agent 策略保存失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleAgentStrategyCreate() {
+    setBusy("agent-strategy-create");
+    try {
+      const response = await fetch("/api/agent/strategies", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "新的公众号 Agent 策略",
+          description: "从这里配置模块角色、顺序、模型和 prompt。",
+          targetChannel: "wechat",
+          modules: [
+            {
+              id: `module-${Date.now()}`,
+              name: "主笔 Agent",
+              role: "writer",
+              order: 1,
+              model: "",
+              prompt: "写一篇克制、有工程判断、适合公众号阅读的原创技术文章。",
+              enabled: true,
+            },
+            {
+              id: `review-${Date.now()}`,
+              name: "审稿 Agent",
+              role: "review",
+              order: 2,
+              model: "",
+              prompt: "检查事实风险、洗稿风险、销售 CTA 和公众号可读性。",
+              enabled: true,
+            },
+          ],
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.strategy) {
+        throw new Error(data.error ?? "新建 Agent 策略失败");
+      }
+      setAgentStrategies((current) => upsertAgentStrategy(current, data.strategy));
+      setSelectedAgentStrategyId(data.strategy.id);
+      setNotice({ type: "ok", text: `已新建策略：${data.strategy.name}` });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "新建 Agent 策略失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function patchAgentDraft(draftId: string, payload: Partial<AgentDraft>): Promise<AgentDraft> {
+    const response = await fetch(`/api/agent/drafts/${draftId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.agentDraft) {
+      throw new Error(data.error ?? "Agent 草稿保存失败");
+    }
+    setAgentDrafts((current) => upsertAgentDraft(current, data.agentDraft));
+    return data.agentDraft as AgentDraft;
+  }
+
+  function selectAgentDraftForEditing(draft: AgentDraft | null) {
+    setSelectedAgentDraftId(draft?.id ?? "");
+    setAgentDraftEditor(agentDraftToEditorState(draft));
+  }
+
+  async function handleAgentDraftSave() {
+    if (!selectedAgentDraft) {
+      return;
+    }
+    if (!agentDraftEditor.title.trim() || !stripPreviewHtml(agentDraftEditor.bodyHtml).trim()) {
+      setNotice({ type: "error", text: "Agent 草稿标题和正文不能为空" });
+      return;
+    }
+    setBusy(`agent-draft-edit-${selectedAgentDraft.id}`);
+    try {
+      const updated = await patchAgentDraft(selectedAgentDraft.id, {
+        title: agentDraftEditor.title,
+        bodyHtml: agentDraftEditor.bodyHtml,
+        status: agentDraftEditor.status,
+      });
+      selectAgentDraftForEditing(updated);
+      setNotice({ type: "ok", text: "Agent 草稿已保存" });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "Agent 草稿保存失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleAgentPushLocal(draft: AgentDraft) {
+    setBusy(`agent-push-local-${draft.id}`);
+    try {
+      const response = await fetch(`/api/agent/drafts/${draft.id}/push-local`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.agentDraft || !data.draft) {
+        throw new Error(data.error ?? "推到本地公众号管理失败");
+      }
+      setAgentDrafts((current) => upsertAgentDraft(current, data.agentDraft));
+      setLocalDrafts((current) => upsertDraft(current, data.draft));
+      setNotice({ type: "ok", text: `已推到本地公众号管理：${data.draft.title}` });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "推到本地公众号管理失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleAgentPushWechat(draft: AgentDraft) {
+    setBusy(`agent-push-wechat-${draft.id}`);
+    try {
+      const response = await fetch(`/api/agent/drafts/${draft.id}/push-wechat`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.agentDraft) {
+        throw new Error(data.message ?? data.error ?? "直推微信后台失败");
+      }
+      setAgentDrafts((current) => upsertAgentDraft(current, data.agentDraft));
+      if (data.draft) {
+        setLocalDrafts((current) => upsertDraft(current, data.draft));
+      }
+      setNotice({ type: "ok", text: data.message ?? "已推送到微信草稿箱" });
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "直推微信后台失败" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleDraftEditorSave() {
     if (!selectedLocalDraft) {
       return;
@@ -719,8 +986,8 @@ export function Workbench({
     }
   }
 
-  const workspaceKicker =
-    activeWorkspace === "library" ? "引用素材库" : localArticleCollectionLabel(activeContentChannel);
+  const workspaceKicker = workspaceKickerLabel(activeWorkspace, activeContentChannel);
+  const workspaceTitle = workspaceTitleLabel(activeWorkspace, activeContentChannel);
   const nextThemeMode = themeMode === "dark" ? "light" : "dark";
   const isLibraryEmptyState = activeWorkspace === "library" && !selectedArticle;
 
@@ -737,12 +1004,24 @@ export function Workbench({
     setPendingDeleteId(null);
   }
 
-  function openContentWorkspace(workspace: Exclude<Workspace, "library">) {
+  function openContentWorkspace(workspace: "wechat" | "xiaohongshu") {
     const channel = workspace === "xiaohongshu" ? "xiaohongshu" : "wechat";
     setActiveWorkspace(workspace);
     setActiveModal(null);
     setReaderDropdown(null);
-    selectDraftForEditing(firstPendingDraftForChannel(localDrafts, channel));
+    setDraftBoardFilter("all");
+    selectDraftForEditing(firstDraftForChannel(localDrafts, channel, "all"));
+  }
+
+  function openAgentWorkspace() {
+    setActiveWorkspace("agent");
+    setActiveModal(null);
+    setReaderDropdown(null);
+  }
+
+  function updateDraftBoardFilter(filter: DraftBoardFilter) {
+    setDraftBoardFilter(filter);
+    selectDraftForEditing(firstDraftForChannel(localDrafts, activeContentChannel, filter));
   }
 
   return (
@@ -755,7 +1034,7 @@ export function Workbench({
           <div>
             <div className="brand-title">账号文章系统</div>
             <div className="brand-meta">
-              {articles.length} 篇外部引用素材 · {localDrafts.length} 篇本地创作文章
+              {articles.length} 篇引用素材 · {localDrafts.length} 篇公众号/小红书作品 · {agentDrafts.length} 篇 Agent 草稿
             </div>
           </div>
         </div>
@@ -771,7 +1050,7 @@ export function Workbench({
               }}
               className={workspaceButtonClassName(activeWorkspace === "library")}
             >
-              素材库
+              引用知识库
             </button>
             <button
               type="button"
@@ -780,7 +1059,7 @@ export function Workbench({
               }}
               className={workspaceButtonClassName(activeWorkspace === "wechat")}
             >
-              公众号草稿
+              微信公众号
             </button>
             <button
               type="button"
@@ -789,7 +1068,14 @@ export function Workbench({
               }}
               className={workspaceButtonClassName(activeWorkspace === "xiaohongshu")}
             >
-              小红书草稿
+              小红书
+            </button>
+            <button
+              type="button"
+              onClick={openAgentWorkspace}
+              className={workspaceButtonClassName(activeWorkspace === "agent")}
+            >
+              Agent
             </button>
           </nav>
           <button
@@ -846,7 +1132,7 @@ export function Workbench({
             <div className={`reader-heading ${isLibraryEmptyState ? "reader-heading-empty" : ""}`}>
               <div className="kicker">{workspaceKicker}</div>
               <h1 className={`reader-title ${isLibraryEmptyState ? "reader-title-empty" : ""}`}>
-                {isContentWorkspace ? channelPageTitle(activeContentChannel) : selectedArticle?.title ?? "选择引用素材"}
+                {activeWorkspace === "library" ? selectedArticle?.title ?? "选择引用素材" : workspaceTitle}
               </h1>
             </div>
             <div className="reader-toolbar">
@@ -1028,23 +1314,55 @@ export function Workbench({
           </header>
 
           <div className={isContentWorkspace ? "wechat-layout" : "reader-layout reader-layout-reading"}>
-            {isContentWorkspace ? (
-              <section className="wechat-workspace" aria-label={`${localArticleCollectionLabel(activeContentChannel)}工作台`}>
+            {activeWorkspace === "wechat" ? (
+              <section className="wechat-workspace" aria-label={localArticleCollectionLabel(activeContentChannel)}>
                 <ContentDraftWorkbench
                   busy={busy}
                   channel={activeContentChannel}
                   draftEditor={draftEditor}
-                  drafts={pendingChannelDrafts}
+                  drafts={visibleChannelDrafts}
+                  filter={draftBoardFilter}
                   onCreateBlank={handleCreateBlankDraft}
                   onEditorChange={(patch) => setDraftEditor((current) => ({ ...current, ...patch }))}
+                  onFilterChange={updateDraftBoardFilter}
                   onMove={handleDraftReorder}
+                  onPushWechat={handlePushLocalDraftToWeChat}
                   onSave={handleDraftEditorSave}
                   onSelect={handleDraftSelect}
                   onStatusChange={handleDraftStatusChange}
                   selectedDraft={selectedLocalDraft}
                   stats={channelStats}
+                  syncStats={wechatSyncStats}
+                  totalCount={channelDrafts.length}
                 />
               </section>
+            ) : activeWorkspace === "agent" ? (
+              <AgentWorkspace
+                agentDraftEditor={agentDraftEditor}
+                agentDrafts={agentDrafts}
+                agentReferenceIds={agentReferenceIds}
+                agentStrategies={agentStrategies}
+                agentTopic={agentTopic}
+                articles={articles}
+                busy={busy}
+                onCreateStrategy={handleAgentStrategyCreate}
+                onDraftEditorChange={(patch) => setAgentDraftEditor((current) => ({ ...current, ...patch }))}
+                onDraftGenerate={handleAgentDraftGenerate}
+                onDraftPushLocal={handleAgentPushLocal}
+                onDraftPushWechat={handleAgentPushWechat}
+                onDraftSave={handleAgentDraftSave}
+                onDraftSelect={(draftId) => selectAgentDraftForEditing(agentDrafts.find((draft) => draft.id === draftId) ?? null)}
+                onReferenceToggle={handleAgentReferenceToggle}
+                onStrategyChange={setSelectedAgentStrategyId}
+                onStrategySave={handleAgentStrategySave}
+                onTopicChange={setAgentTopic}
+                selectedAgentDraft={selectedAgentDraft}
+                selectedAgentDraftId={selectedAgentDraftId}
+                selectedAgentStrategy={selectedAgentStrategy}
+                selectedAgentStrategyId={selectedAgentStrategyId}
+              />
+            ) : activeWorkspace === "xiaohongshu" ? (
+              <XiaohongshuPlaceholder />
             ) : (
               <article className="reader-card">
                 {selectedArticle ? (
@@ -1388,41 +1706,58 @@ function ContentDraftWorkbench({
   channel,
   draftEditor,
   drafts,
+  filter,
   onCreateBlank,
   onEditorChange,
+  onFilterChange,
   onMove,
+  onPushWechat,
   onSave,
   onSelect,
   onStatusChange,
   selectedDraft,
   stats,
+  syncStats,
+  totalCount,
 }: {
   busy: string | null;
   channel: ContentChannel;
   draftEditor: DraftEditorState;
   drafts: LocalDraft[];
+  filter: DraftBoardFilter;
   onCreateBlank: () => void;
   onEditorChange: (patch: Partial<DraftEditorState>) => void;
+  onFilterChange: (filter: DraftBoardFilter) => void;
   onMove: (draft: LocalDraft, direction: -1 | 1) => void | Promise<void>;
+  onPushWechat?: (draft: LocalDraft) => void | Promise<void>;
   onSave: () => void | Promise<void>;
   onSelect: (draftId: string) => void;
   onStatusChange: (draft: LocalDraft, status: PublishStatus) => void | Promise<void>;
   selectedDraft: LocalDraft | null;
   stats: Record<PublishStatus, number>;
+  syncStats: Record<LocalDraft["wechatDraftStatus"], number>;
+  totalCount: number;
 }) {
   const label = channelLabel(channel);
   const selectedStatus = draftEditor.publishStatus;
+  const filterOptions: Array<{ value: DraftBoardFilter; label: string; count: number }> = [
+    { value: "all", label: "全部作品", count: totalCount },
+    { value: "draft", label: "草稿箱", count: stats.draft ?? 0 },
+    { value: "queued", label: "待发布", count: stats.queued ?? 0 },
+    { value: "published", label: "已发布", count: stats.published ?? 0 },
+    { value: "archived", label: "归档", count: stats.archived ?? 0 },
+  ];
 
   return (
-    <section className="panel content-draft-workbench" aria-label={`${label}待提交草稿工作台`}>
+    <section className="panel content-draft-workbench" aria-label={`${label}内容管理工作台`}>
       <div className="content-draft-heading">
         <div>
           <div className="panel-title">
             <FileText className="h-4 w-4 text-[var(--blue)]" />
-            {label}草稿工作台
+            {label}内容管理台
           </div>
           <p className="panel-copy">
-            这里只显示待提交草稿：草稿 {stats.draft ?? 0} 篇 · 待发布 {stats.queued ?? 0} 篇。正文可以直接在右侧编辑保存。
+            统一看本地草稿箱、待发布、已发布和归档作品；微信草稿箱状态会跟随推送结果更新。
           </p>
         </div>
         <button type="button" className="btn btn-secondary content-create-button" disabled={busy === "draft-create"} onClick={onCreateBlank}>
@@ -1431,10 +1766,39 @@ function ContentDraftWorkbench({
         </button>
       </div>
 
+      <div className="content-draft-summary-grid" aria-label={`${label}作品概览`}>
+        <DraftMetricCard label="全部作品" value={totalCount} detail={`微信草稿箱 ${syncStats.sent ?? 0} 篇`} />
+        <DraftMetricCard label="本地草稿箱" value={stats.draft ?? 0} detail={`未推送 ${syncStats.not_sent ?? 0} 篇`} />
+        <DraftMetricCard label="待发布" value={stats.queued ?? 0} detail="需要进入发布流程" />
+        <DraftMetricCard label="已发布作品" value={stats.published ?? 0} detail={`同步失败 ${syncStats.failed ?? 0} 篇`} />
+      </div>
+
+      <div className="content-draft-filters" role="tablist" aria-label={`${label}作品状态筛选`}>
+        {filterOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            role="tab"
+            aria-label={`${option.label} ${option.count}`}
+            aria-selected={filter === option.value}
+            className={`content-draft-filter ${filter === option.value ? "content-draft-filter-active" : ""}`}
+            onClick={() => onFilterChange(option.value)}
+          >
+            <span>{option.label}</span>
+            <strong>{option.count}</strong>
+          </button>
+        ))}
+      </div>
+
       <div className="content-draft-shell">
-        <div className="content-draft-list" aria-label="待提交草稿文件">
+        <div className="content-draft-list" aria-label={`${label}作品列表`}>
           {drafts.map((draft, index) => (
-            <article key={draft.id} className={`content-draft-item ${selectedDraft?.id === draft.id ? "content-draft-item-active" : ""}`}>
+            <article
+              key={draft.id}
+              className={`content-draft-item content-draft-item-${draftStatus(draft)} ${
+                selectedDraft?.id === draft.id ? "content-draft-item-active" : ""
+              }`}
+            >
               <div className="content-order-controls" aria-label="调整发布顺序">
                 <button
                   type="button"
@@ -1462,16 +1826,19 @@ function ContentDraftWorkbench({
                 <span className="content-queue-title">{draft.title}</span>
                 <span className="content-queue-preview">{draftPreviewText(draft).slice(0, 160) || "暂无正文"}</span>
                 <span className="content-queue-meta">
-                  <span>{publishStatusLabel(draftStatus(draft))}</span>
-                  <span>{draft.plannedPublishAt ? `计划 ${formatDateTime(draft.plannedPublishAt)}` : "未排期"}</span>
+                  <span className={`content-draft-status-pill content-draft-status-${draftStatus(draft)}`}>
+                    {publishStatusLabel(draftStatus(draft))}
+                  </span>
+                  <span>{draftTimelineLabel(draft)}</span>
+                  <span>{wechatDraftStatusLabel(draft.wechatDraftStatus, channel)}</span>
                 </span>
               </button>
             </article>
           ))}
           {drafts.length === 0 ? (
             <div className="empty-list">
-              <div className="empty-list-title">没有待提交草稿</div>
-              <p>已发布和归档文章会从这里隐藏；可以新建空白草稿继续整理。</p>
+              <div className="empty-list-title">没有匹配作品</div>
+              <p>切换状态筛选，或新建一篇空白草稿继续整理。</p>
             </div>
           ) : null}
         </div>
@@ -1504,6 +1871,8 @@ function ContentDraftWorkbench({
                 >
                   <option value="draft">草稿</option>
                   <option value="queued">待发布</option>
+                  <option value="published">已发布</option>
+                  <option value="archived">归档</option>
                 </select>
                 <label className="field-label" htmlFor="draft-editor-plan">
                   计划发布时间
@@ -1545,18 +1914,44 @@ function ContentDraftWorkbench({
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  disabled={busy === `draft-status-${selectedDraft.id}`}
+                  disabled={busy === `draft-status-${selectedDraft.id}` || draftStatus(selectedDraft) === "published"}
                   onClick={() => void onStatusChange(selectedDraft, "published")}
                 >
                   <CheckCircle2 className="h-4 w-4" />
-                  标为已发布
+                  {draftStatus(selectedDraft) === "published" ? "已发布" : "标为已发布"}
+                </button>
+                {channel === "wechat" ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={!onPushWechat || busy === `draft-wechat-${selectedDraft.id}` || selectedDraft.wechatDraftStatus === "sent"}
+                    onClick={() => {
+                      if (onPushWechat) {
+                        void onPushWechat(selectedDraft);
+                      }
+                    }}
+                  >
+                    {busy === `draft-wechat-${selectedDraft.id}` ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    {selectedDraft.wechatDraftStatus === "sent" ? "已进微信草稿箱" : "推送微信草稿箱"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={busy === `draft-status-${selectedDraft.id}`}
+                  onClick={() => void onStatusChange(selectedDraft, draftStatus(selectedDraft) === "archived" ? "draft" : "archived")}
+                >
+                  <Archive className="h-4 w-4" />
+                  {draftStatus(selectedDraft) === "archived" ? "移回草稿箱" : "归档"}
                 </button>
               </div>
 
               <section className="content-draft-preview-panel" aria-label="正文预览">
                 <div className="metric-line">
                   <span className="field-label">正文预览</span>
-                  <span className="tiny-meta">{publishStatusLabel(selectedStatus)} · {stripPreviewHtml(draftEditor.body).length} 字</span>
+                  <span className="tiny-meta">
+                    {publishStatusLabel(selectedStatus)} · {wechatDraftStatusLabel(selectedDraft.wechatDraftStatus, channel)} · {stripPreviewHtml(draftEditor.body).length} 字
+                  </span>
                 </div>
                 <div className="content-draft-readable">
                   <ReadableContent content={draftEditor.body || "暂无正文"} />
@@ -1566,12 +1961,22 @@ function ContentDraftWorkbench({
           ) : (
             <div className="empty-list">
               <div className="empty-list-title">请选择一个草稿</div>
-              <p>左侧会列出所有待提交的{label}草稿，点开后可以编辑标题、正文和排期。</p>
+              <p>左侧会列出当前状态下的{label}作品，点开后可以编辑标题、正文、状态和排期。</p>
             </div>
           )}
         </div>
       </div>
     </section>
+  );
+}
+
+function DraftMetricCard({ label, value, detail }: { label: string; value: number; detail: string }) {
+  return (
+    <div className="content-draft-stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
   );
 }
 
@@ -1723,6 +2128,559 @@ function StatusBadge({ notice }: { notice: Notice }) {
       <Icon className="h-4 w-4 shrink-0" />
       <span className="truncate">{notice.text}</span>
     </div>
+  );
+}
+
+function AgentWorkspace({
+  agentDraftEditor,
+  agentDrafts,
+  agentReferenceIds,
+  agentStrategies,
+  agentTopic,
+  articles,
+  busy,
+  onCreateStrategy,
+  onDraftEditorChange,
+  onDraftGenerate,
+  onDraftPushLocal,
+  onDraftPushWechat,
+  onDraftSave,
+  onDraftSelect,
+  onReferenceToggle,
+  onStrategyChange,
+  onStrategySave,
+  onTopicChange,
+  selectedAgentDraft,
+  selectedAgentDraftId,
+  selectedAgentStrategy,
+  selectedAgentStrategyId,
+}: {
+  agentDraftEditor: AgentDraftEditorState;
+  agentDrafts: AgentDraft[];
+  agentReferenceIds: string[];
+  agentStrategies: AgentStrategy[];
+  agentTopic: string;
+  articles: Article[];
+  busy: string | null;
+  onCreateStrategy: () => void | Promise<void>;
+  onDraftEditorChange: (patch: Partial<AgentDraftEditorState>) => void;
+  onDraftGenerate: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+  onDraftPushLocal: (draft: AgentDraft) => void | Promise<void>;
+  onDraftPushWechat: (draft: AgentDraft) => void | Promise<void>;
+  onDraftSave: () => void | Promise<void>;
+  onDraftSelect: (draftId: string) => void;
+  onReferenceToggle: (articleId: string) => void;
+  onStrategyChange: (strategyId: string) => void;
+  onStrategySave: (strategy: AgentStrategy) => void | Promise<void>;
+  onTopicChange: (topic: string) => void;
+  selectedAgentDraft: AgentDraft | null;
+  selectedAgentDraftId: string;
+  selectedAgentStrategy: AgentStrategy | null;
+  selectedAgentStrategyId: string;
+}) {
+  return (
+    <section className="agent-workspace" aria-label="Agent 工作台">
+      <AgentStrategyManagement
+        key={selectedAgentStrategy?.id ?? "no-agent-strategy"}
+        busy={busy}
+        onCreateStrategy={onCreateStrategy}
+        onStrategyChange={onStrategyChange}
+        onStrategySave={onStrategySave}
+        selectedStrategy={selectedAgentStrategy}
+        selectedStrategyId={selectedAgentStrategyId}
+        strategies={agentStrategies}
+      />
+      <AgentGenerationPanel
+        articles={articles}
+        busy={busy}
+        onGenerate={onDraftGenerate}
+        onReferenceToggle={onReferenceToggle}
+        onStrategyChange={onStrategyChange}
+        onTopicChange={onTopicChange}
+        selectedArticleIds={agentReferenceIds}
+        selectedStrategyId={selectedAgentStrategyId}
+        strategies={agentStrategies}
+        topic={agentTopic}
+      />
+      <AgentDraftPool
+        busy={busy}
+        draftEditor={agentDraftEditor}
+        drafts={agentDrafts}
+        onEditorChange={onDraftEditorChange}
+        onPushLocal={onDraftPushLocal}
+        onPushWechat={onDraftPushWechat}
+        onSave={onDraftSave}
+        onSelect={onDraftSelect}
+        selectedDraft={selectedAgentDraft}
+        selectedDraftId={selectedAgentDraftId}
+      />
+    </section>
+  );
+}
+
+function AgentStrategyManagement({
+  busy,
+  onCreateStrategy,
+  onStrategyChange,
+  onStrategySave,
+  selectedStrategy,
+  selectedStrategyId,
+  strategies,
+}: {
+  busy: string | null;
+  onCreateStrategy: () => void | Promise<void>;
+  onStrategyChange: (strategyId: string) => void;
+  onStrategySave: (strategy: AgentStrategy) => void | Promise<void>;
+  selectedStrategy: AgentStrategy | null;
+  selectedStrategyId: string;
+  strategies: AgentStrategy[];
+}) {
+  const [editor, setEditor] = useState<AgentStrategy | null>(() => cloneAgentStrategy(selectedStrategy));
+
+  function patchEditor(patch: Partial<AgentStrategy>) {
+    setEditor((current) => (current ? { ...current, ...patch } : current));
+  }
+
+  function patchModule(moduleId: string, patch: Partial<AgentStrategyModule>) {
+    setEditor((current) =>
+      current
+        ? {
+            ...current,
+            modules: current.modules.map((module) => (module.id === moduleId ? { ...module, ...patch } : module)),
+          }
+        : current,
+    );
+  }
+
+  function moveModule(moduleId: string, direction: -1 | 1) {
+    setEditor((current) => {
+      if (!current) {
+        return current;
+      }
+      const modules = [...current.modules].sort((left, right) => left.order - right.order);
+      const index = modules.findIndex((module) => module.id === moduleId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= modules.length) {
+        return current;
+      }
+      const [module] = modules.splice(index, 1);
+      modules.splice(nextIndex, 0, module);
+      return {
+        ...current,
+        modules: modules.map((item, itemIndex) => ({ ...item, order: itemIndex + 1 })),
+      };
+    });
+  }
+
+  function addModule() {
+    setEditor((current) => {
+      if (!current) {
+        return current;
+      }
+      const nextOrder = current.modules.length + 1;
+      return {
+        ...current,
+        modules: [
+          ...current.modules,
+          {
+            id: `module-${Date.now()}`,
+            name: "自定义 Agent",
+            role: "custom",
+            order: nextOrder,
+            model: "",
+            prompt: "补充这个模块的工作目标、输入边界和验收标准。",
+            enabled: true,
+          },
+        ],
+      };
+    });
+  }
+
+  return (
+    <section className="panel agent-strategy-panel" aria-label="策略管理">
+      <div className="wechat-section-heading">
+        <div>
+          <div className="panel-title">
+            <Brain className="h-4 w-4 text-[var(--amber)]" />
+            策略管理
+          </div>
+          <p className="panel-copy">配置生成策略、模块顺序、模块角色、模型和 prompt。</p>
+        </div>
+        <button type="button" className="btn btn-secondary" disabled={busy === "agent-strategy-create"} onClick={() => void onCreateStrategy()}>
+          {busy === "agent-strategy-create" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+          新建策略
+        </button>
+      </div>
+
+      <div className="agent-strategy-layout">
+        <div className="agent-strategy-list" aria-label="Agent 策略列表">
+          {strategies.map((strategy) => (
+            <button
+              key={strategy.id}
+              type="button"
+              className={`agent-strategy-item ${selectedStrategyId === strategy.id ? "agent-strategy-item-active" : ""}`}
+              onClick={() => onStrategyChange(strategy.id)}
+            >
+              <strong>{strategy.name}</strong>
+              <span>
+                {channelLabel(strategy.targetChannel)} · {strategy.modules.filter((module) => module.enabled).length} 个模块
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {editor ? (
+          <div className="agent-strategy-editor">
+            <div className="agent-strategy-fields">
+              <label className="reader-filter-control" htmlFor="agent-strategy-name">
+                <span>策略名</span>
+                <input id="agent-strategy-name" className="field" value={editor.name} onChange={(event) => patchEditor({ name: event.target.value })} />
+              </label>
+              <label className="reader-filter-control" htmlFor="agent-strategy-channel">
+                <span>平台</span>
+                <select
+                  id="agent-strategy-channel"
+                  className="field"
+                  value={editor.targetChannel}
+                  onChange={(event) => patchEditor({ targetChannel: event.target.value as ContentChannel })}
+                >
+                  <option value="wechat">微信公众号</option>
+                  <option value="xiaohongshu">小红书</option>
+                </select>
+              </label>
+              <label className="reader-filter-control" htmlFor="agent-strategy-model">
+                <span>默认模型</span>
+                <input id="agent-strategy-model" className="field" value={editor.defaultModel} placeholder="留空使用系统模型" onChange={(event) => patchEditor({ defaultModel: event.target.value })} />
+              </label>
+              <label className="reader-filter-control" htmlFor="agent-strategy-status">
+                <span>状态</span>
+                <select
+                  id="agent-strategy-status"
+                  className="field"
+                  value={editor.status}
+                  onChange={(event) => patchEditor({ status: event.target.value === "archived" ? "archived" : "active" })}
+                >
+                  <option value="active">启用</option>
+                  <option value="archived">归档</option>
+                </select>
+              </label>
+            </div>
+            <label className="field-label" htmlFor="agent-strategy-description">
+              策略说明
+            </label>
+            <textarea
+              id="agent-strategy-description"
+              className="textarea agent-strategy-description"
+              value={editor.description}
+              onChange={(event) => patchEditor({ description: event.target.value })}
+            />
+
+            <div className="agent-module-list" aria-label="策略模块">
+              {editor.modules.map((module, index) => (
+                <article key={module.id} className="agent-module-row">
+                  <div className="agent-module-order">
+                    <button type="button" className="content-order-button" aria-label={`上移模块：${module.name}`} disabled={index === 0} onClick={() => moveModule(module.id, -1)}>
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    </button>
+                    <span>{module.order}</span>
+                    <button type="button" className="content-order-button" aria-label={`下移模块：${module.name}`} disabled={index === editor.modules.length - 1} onClick={() => moveModule(module.id, 1)}>
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="agent-module-main">
+                    <div className="agent-module-grid">
+                      <label className="reader-filter-control">
+                        <span>模块名</span>
+                        <input className="field" value={module.name} onChange={(event) => patchModule(module.id, { name: event.target.value })} />
+                      </label>
+                      <label className="reader-filter-control">
+                        <span>角色</span>
+                        <select className="field" value={module.role} onChange={(event) => patchModule(module.id, { role: event.target.value as AgentStrategyModuleRole })}>
+                          {AGENT_ROLE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="reader-filter-control">
+                        <span>模型</span>
+                        <input className="field" value={module.model} placeholder="留空继承" onChange={(event) => patchModule(module.id, { model: event.target.value })} />
+                      </label>
+                      <label className="agent-module-toggle">
+                        <input type="checkbox" checked={module.enabled} onChange={(event) => patchModule(module.id, { enabled: event.target.checked })} />
+                        启用
+                      </label>
+                    </div>
+                    <textarea className="textarea agent-module-prompt" value={module.prompt} onChange={(event) => patchModule(module.id, { prompt: event.target.value })} />
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            <div className="agent-panel-actions">
+              <button type="button" className="btn btn-secondary" onClick={addModule}>
+                <Pencil className="h-4 w-4" />
+                添加模块
+              </button>
+              <button type="button" className="btn btn-primary" disabled={busy === `agent-strategy-${editor.id}`} onClick={() => void onStrategySave(editor)}>
+                {busy === `agent-strategy-${editor.id}` ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                保存策略
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="empty-list">
+            <div className="empty-list-title">暂无策略</div>
+            <p>新建一个策略后再运行 Agent。</p>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function AgentGenerationPanel({
+  articles,
+  busy,
+  onGenerate,
+  onReferenceToggle,
+  onStrategyChange,
+  onTopicChange,
+  selectedArticleIds,
+  selectedStrategyId,
+  strategies,
+  topic,
+}: {
+  articles: Article[];
+  busy: string | null;
+  onGenerate: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+  onReferenceToggle: (articleId: string) => void;
+  onStrategyChange: (strategyId: string) => void;
+  onTopicChange: (topic: string) => void;
+  selectedArticleIds: string[];
+  selectedStrategyId: string;
+  strategies: AgentStrategy[];
+  topic: string;
+}) {
+  const selectedSet = useMemo(() => new Set(selectedArticleIds), [selectedArticleIds]);
+  const referenceArticles = useMemo(() => {
+    const selected = articles.filter((article) => selectedSet.has(article.id));
+    const rest = articles.filter((article) => !selectedSet.has(article.id));
+    return [...selected, ...rest].slice(0, 14);
+  }, [articles, selectedSet]);
+
+  return (
+    <section className="panel agent-generate-panel" aria-label="生成工作台">
+      <div className="wechat-section-heading">
+        <div>
+          <div className="panel-title">
+            <Sparkles className="h-4 w-4 text-[var(--green)]" />
+            生成工作台
+          </div>
+          <p className="panel-copy">选择策略、选题和引用知识库文章，生成结果先进入 Agent 草稿池。</p>
+        </div>
+      </div>
+
+      <form className="wechat-writing-form" onSubmit={(event) => void onGenerate(event)}>
+        <div className="writing-strategy-grid">
+          <label className="reader-filter-control writing-topic-field" htmlFor="agent-topic">
+            <span>选题</span>
+            <input id="agent-topic" value={topic} onChange={(event) => onTopicChange(event.target.value)} placeholder="例如：OpenAI 大神教你如何榨干 Codex" className="field" />
+          </label>
+          <label className="reader-filter-control" htmlFor="agent-strategy-select">
+            <span>策略</span>
+            <select id="agent-strategy-select" value={selectedStrategyId} onChange={(event) => onStrategyChange(event.target.value)} className="field">
+              {strategies.map((strategy) => (
+                <option key={strategy.id} value={strategy.id}>
+                  {strategy.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" className="btn btn-primary writing-generate-submit" disabled={busy === "agent-generate" || selectedArticleIds.length === 0}>
+            {busy === "agent-generate" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {busy === "agent-generate" ? "Agent 生成中" : "运行 Agent"}
+          </button>
+        </div>
+
+        <div className="wechat-reference-list" aria-label="引用知识库文章选择">
+          {referenceArticles.map((article) => (
+            <label key={article.id} className="wechat-reference-option">
+              <input type="checkbox" checked={selectedSet.has(article.id)} onChange={() => onReferenceToggle(article.id)} />
+              <span>
+                <strong>{article.title}</strong>
+                <small>
+                  {articleSourceProject(article)} · {articleCategory(article)}
+                </small>
+              </span>
+            </label>
+          ))}
+          {articles.length === 0 ? <p className="panel-copy">引用知识库为空，先录入文章后再生成。</p> : null}
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function AgentDraftPool({
+  busy,
+  draftEditor,
+  drafts,
+  onEditorChange,
+  onPushLocal,
+  onPushWechat,
+  onSave,
+  onSelect,
+  selectedDraft,
+  selectedDraftId,
+}: {
+  busy: string | null;
+  draftEditor: AgentDraftEditorState;
+  drafts: AgentDraft[];
+  onEditorChange: (patch: Partial<AgentDraftEditorState>) => void;
+  onPushLocal: (draft: AgentDraft) => void | Promise<void>;
+  onPushWechat: (draft: AgentDraft) => void | Promise<void>;
+  onSave: () => void | Promise<void>;
+  onSelect: (draftId: string) => void;
+  selectedDraft: AgentDraft | null;
+  selectedDraftId: string;
+}) {
+  return (
+    <section className="panel agent-draft-pool" aria-label="Agent 草稿池">
+      <div className="wechat-section-heading">
+        <div>
+          <div className="panel-title">
+            <FileText className="h-4 w-4 text-[var(--blue)]" />
+            Agent 草稿池
+          </div>
+          <p className="panel-copy">Agent 生成稿独立保存，确认后再推到公众号管理或微信后台。</p>
+        </div>
+        <span className="agent-status-pill agent-status-pill-ready">{drafts.length} 篇</span>
+      </div>
+
+      <div className="agent-draft-shell">
+        <div className="content-draft-list agent-draft-list" aria-label="Agent 草稿列表">
+          {drafts.map((draft) => (
+            <article key={draft.id} className={`content-draft-item ${selectedDraftId === draft.id ? "content-draft-item-active" : ""}`}>
+              <button type="button" className="content-draft-item-main" aria-pressed={selectedDraftId === draft.id} onClick={() => onSelect(draft.id)}>
+                <span className="content-queue-title">{draft.title}</span>
+                <span className="content-queue-preview">{stripPreviewHtml(draft.bodyHtml).slice(0, 160) || "暂无正文"}</span>
+                <span className="content-queue-meta">
+                  <span className="content-draft-status-pill">{agentDraftStatusLabel(draft.status)}</span>
+                  <span>{draft.strategySnapshot.name}</span>
+                  <span>{formatDateTime(draft.updatedAt)}</span>
+                </span>
+              </button>
+            </article>
+          ))}
+          {drafts.length === 0 ? (
+            <div className="empty-list">
+              <div className="empty-list-title">暂无 Agent 草稿</div>
+              <p>运行一次 Agent 后，生成稿会先出现在这里。</p>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="content-draft-editor agent-draft-editor" aria-label="Agent 草稿编辑区">
+          {selectedDraft ? (
+            <>
+              <label className="field-label" htmlFor="agent-draft-title">
+                标题
+              </label>
+              <input id="agent-draft-title" className="field" value={draftEditor.title} onChange={(event) => onEditorChange({ title: event.target.value })} />
+
+              <div className="content-draft-controls">
+                <label className="field-label" htmlFor="agent-draft-status">
+                  状态
+                </label>
+                <select id="agent-draft-status" className="field" value={draftEditor.status} onChange={(event) => onEditorChange({ status: event.target.value as AgentDraftStatus })}>
+                  <option value="generated">已生成</option>
+                  <option value="editing">编辑中</option>
+                  <option value="approved">已确认</option>
+                  <option value="pushed_local">已推本地</option>
+                  <option value="pushed_wechat">已推微信</option>
+                  <option value="failed">失败</option>
+                  <option value="archived">归档</option>
+                </select>
+                <span className="tiny-meta">
+                  审稿 {selectedDraft.review?.score ?? "未评分"} · 复用提醒 {selectedDraft.warnings.length}
+                </span>
+              </div>
+
+              <label className="field-label" htmlFor="agent-draft-body">
+                正文
+              </label>
+              <textarea id="agent-draft-body" className="textarea content-draft-body-field" value={draftEditor.bodyHtml} onChange={(event) => onEditorChange({ bodyHtml: event.target.value })} />
+
+              <div className="content-draft-editor-actions">
+                <button type="button" className="btn btn-primary" disabled={busy === `agent-draft-edit-${selectedDraft.id}`} onClick={() => void onSave()}>
+                  {busy === `agent-draft-edit-${selectedDraft.id}` ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  保存 Agent 草稿
+                </button>
+                <button type="button" className="btn btn-secondary" disabled={busy === `agent-push-local-${selectedDraft.id}`} onClick={() => void onPushLocal(selectedDraft)}>
+                  {busy === `agent-push-local-${selectedDraft.id}` ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  推到本地公众号管理
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={selectedDraft.targetChannel !== "wechat" || busy === `agent-push-wechat-${selectedDraft.id}`}
+                  onClick={() => void onPushWechat(selectedDraft)}
+                >
+                  {busy === `agent-push-wechat-${selectedDraft.id}` ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  直接推微信后台
+                </button>
+              </div>
+
+              {selectedDraft.review?.revisionSummary || selectedDraft.error || selectedDraft.warnings.length > 0 ? (
+                <div className="editorial-result-panel" aria-label="Agent 审稿结果">
+                  {selectedDraft.review?.revisionSummary ? <p className="panel-copy">审稿：{selectedDraft.review.revisionSummary}</p> : null}
+                  {selectedDraft.error ? <p className="panel-copy">错误：{selectedDraft.error}</p> : null}
+                  {selectedDraft.warnings.length > 0 ? (
+                    <div className="warning-list">
+                      <strong>长句复用提醒</strong>
+                      {selectedDraft.warnings.slice(0, 3).map((warning) => (
+                        <p key={`${warning.sourceArticleId}-${warning.matchedText.slice(0, 12)}`}>
+                          {warning.sourceTitle}：{warning.matchedText}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <section className="content-draft-preview-panel" aria-label="Agent 草稿正文预览">
+                <div className="metric-line">
+                  <span className="field-label">正文预览</span>
+                  <span className="tiny-meta">{stripPreviewHtml(draftEditor.bodyHtml).length} 字</span>
+                </div>
+                <div className="content-draft-readable">
+                  <ReadableContent content={draftEditor.bodyHtml || "暂无正文"} />
+                </div>
+              </section>
+            </>
+          ) : (
+            <div className="empty-list">
+              <div className="empty-list-title">请选择一个 Agent 草稿</div>
+              <p>草稿池里的内容不会自动进入公众号管理。</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function XiaohongshuPlaceholder() {
+  return (
+    <section className="panel xiaohongshu-placeholder" aria-label="小红书工作台">
+      <div className="panel-title">
+        <FileText className="h-4 w-4 text-[var(--red)]" />
+        小红书
+      </div>
+      <p className="panel-copy">入口已保留，当前重构不接入 Agent。</p>
+    </section>
   );
 }
 
@@ -2050,8 +3008,14 @@ function draftChannel(draft: LocalDraft): ContentChannel {
   return draft.contentChannel === "xiaohongshu" ? "xiaohongshu" : "wechat";
 }
 
-function firstPendingDraftForChannel(drafts: LocalDraft[], channel: ContentChannel): LocalDraft | null {
-  return drafts.filter((draft) => draftChannel(draft) === channel && isPendingDraft(draft)).sort(compareDraftQueue)[0] ?? null;
+function firstDraftForChannel(drafts: LocalDraft[], channel: ContentChannel, filter: DraftBoardFilter): LocalDraft | null {
+  return drafts
+    .filter((draft) => draftChannel(draft) === channel && draftMatchesBoardFilter(draft, filter))
+    .sort(compareDraftQueue)[0] ?? null;
+}
+
+function draftMatchesBoardFilter(draft: LocalDraft, filter: DraftBoardFilter): boolean {
+  return filter === "all" || draftStatus(draft) === filter;
 }
 
 function draftToEditorState(draft: LocalDraft | null | undefined): DraftEditorState {
@@ -2059,14 +3023,17 @@ function draftToEditorState(draft: LocalDraft | null | undefined): DraftEditorSt
     title: draft?.title ?? "",
     body: draft?.body ?? "",
     notes: draft?.notes ?? "",
-    publishStatus: draft && isPendingDraft(draft) ? draftStatus(draft) : "draft",
+    publishStatus: draft ? draftStatus(draft) : "draft",
     plannedPublishAt: toDateTimeLocalValue(draft?.plannedPublishAt),
   };
 }
 
-function isPendingDraft(draft: LocalDraft): boolean {
-  const status = draftStatus(draft);
-  return status === "draft" || status === "queued";
+function agentDraftToEditorState(draft: AgentDraft | null | undefined): AgentDraftEditorState {
+  return {
+    title: draft?.title ?? "",
+    bodyHtml: draft?.bodyHtml ?? "",
+    status: draft?.status ?? "generated",
+  };
 }
 
 function draftStatus(draft: LocalDraft): PublishStatus {
@@ -2075,16 +3042,41 @@ function draftStatus(draft: LocalDraft): PublishStatus {
     : "draft";
 }
 
+function cloneAgentStrategy(strategy: AgentStrategy | null | undefined): AgentStrategy | null {
+  return strategy
+    ? {
+        ...strategy,
+        modules: strategy.modules.map((module) => ({ ...module })),
+      }
+    : null;
+}
+
 function channelLabel(channel: ContentChannel): string {
   return channel === "xiaohongshu" ? "小红书" : "微信公众号";
 }
 
-function channelPageTitle(channel: ContentChannel): string {
-  return localArticleCollectionLabel(channel);
+function localArticleCollectionLabel(channel: ContentChannel): string {
+  return channel === "xiaohongshu" ? "小红书工作台" : "微信公众号工作台";
 }
 
-function localArticleCollectionLabel(channel: ContentChannel): string {
-  return channel === "xiaohongshu" ? "小红书草稿" : "公众号草稿";
+function workspaceKickerLabel(workspace: Workspace, channel: ContentChannel): string {
+  if (workspace === "library") {
+    return "引用知识库";
+  }
+  if (workspace === "agent") {
+    return "Agent 编辑部";
+  }
+  return channelLabel(channel);
+}
+
+function workspaceTitleLabel(workspace: Workspace, channel: ContentChannel): string {
+  if (workspace === "agent") {
+    return "Agent 工作台";
+  }
+  if (workspace === "xiaohongshu") {
+    return "小红书";
+  }
+  return localArticleCollectionLabel(channel);
 }
 
 function publishStatusLabel(status: PublishStatus): string {
@@ -2100,6 +3092,28 @@ function publishStatusLabel(status: PublishStatus): string {
   return "草稿";
 }
 
+function agentDraftStatusLabel(status: AgentDraftStatus): string {
+  if (status === "editing") {
+    return "编辑中";
+  }
+  if (status === "approved") {
+    return "已确认";
+  }
+  if (status === "pushed_local") {
+    return "已推本地";
+  }
+  if (status === "pushed_wechat") {
+    return "已推微信";
+  }
+  if (status === "failed") {
+    return "失败";
+  }
+  if (status === "archived") {
+    return "归档";
+  }
+  return "已生成";
+}
+
 function buildDraftStats(drafts: LocalDraft[]): Record<PublishStatus, number> {
   const stats: Record<PublishStatus, number> = {
     draft: 0,
@@ -2111,6 +3125,48 @@ function buildDraftStats(drafts: LocalDraft[]): Record<PublishStatus, number> {
     stats[draftStatus(draft)] += 1;
   }
   return stats;
+}
+
+function buildWeChatSyncStats(drafts: LocalDraft[]): Record<LocalDraft["wechatDraftStatus"], number> {
+  const stats: Record<LocalDraft["wechatDraftStatus"], number> = {
+    not_sent: 0,
+    sent: 0,
+    failed: 0,
+  };
+  for (const draft of drafts) {
+    const status = draft.wechatDraftStatus === "sent" || draft.wechatDraftStatus === "failed" ? draft.wechatDraftStatus : "not_sent";
+    stats[status] += 1;
+  }
+  return stats;
+}
+
+function draftTimelineLabel(draft: LocalDraft): string {
+  if (draftStatus(draft) === "published" && draft.publishedAt) {
+    return `发布 ${formatDateTime(draft.publishedAt)}`;
+  }
+  if (draft.plannedPublishAt) {
+    return `计划 ${formatDateTime(draft.plannedPublishAt)}`;
+  }
+  return "未排期";
+}
+
+function wechatDraftStatusLabel(status: LocalDraft["wechatDraftStatus"], channel: ContentChannel): string {
+  if (channel === "xiaohongshu") {
+    if (status === "failed") {
+      return "平台同步失败";
+    }
+    if (status === "sent") {
+      return "已同步平台草稿";
+    }
+    return "未同步平台";
+  }
+  if (status === "failed") {
+    return "微信草稿箱失败";
+  }
+  if (status === "sent") {
+    return "已进微信草稿箱";
+  }
+  return "未推送微信草稿箱";
 }
 
 function compareDraftQueue(left: LocalDraft, right: LocalDraft): number {
@@ -2254,6 +3310,18 @@ function upsertDraft(current: LocalDraft[], draft: LocalDraft): LocalDraft[] {
   return next.sort(compareDraftQueue);
 }
 
+function upsertAgentDraft(current: AgentDraft[], draft: AgentDraft): AgentDraft[] {
+  const existing = current.some((item) => item.id === draft.id);
+  const next = existing ? current.map((item) => (item.id === draft.id ? draft : item)) : [draft, ...current];
+  return next.sort((left, right) => compareDateDesc(left.updatedAt, right.updatedAt));
+}
+
+function upsertAgentStrategy(current: AgentStrategy[], strategy: AgentStrategy): AgentStrategy[] {
+  const existing = current.some((item) => item.id === strategy.id);
+  const next = existing ? current.map((item) => (item.id === strategy.id ? strategy : item)) : [strategy, ...current];
+  return next.sort((left, right) => compareDateDesc(left.updatedAt, right.updatedAt));
+}
+
 function sourceTypeLabel(sourceType: Article["sourceType"]): string {
   if (sourceType === "wechat") {
     return "公众号链接";
@@ -2276,6 +3344,18 @@ const inputClassName = "field";
 const textareaClassName = "textarea";
 const primaryButtonClassName = "btn btn-primary";
 const secondaryButtonClassName = "btn btn-secondary";
+const AGENT_ROLE_OPTIONS: Array<{ value: AgentStrategyModuleRole; label: string }> = [
+  { value: "editor_in_chief", label: "主编" },
+  { value: "technical_brief", label: "技术骨架" },
+  { value: "opening", label: "开头" },
+  { value: "pacing", label: "节奏" },
+  { value: "layout", label: "排版" },
+  { value: "image", label: "图片插入" },
+  { value: "checklist", label: "可收藏清单" },
+  { value: "review", label: "审稿" },
+  { value: "writer", label: "主笔" },
+  { value: "custom", label: "自定义" },
+];
 const EDITABLE_TAIL_MARKER_PATTERN =
   /(?:一键三连|小心心|欢迎在评论区|评论区留下|点亮星标|科技前沿进展每日见|—\s*完\s*—|全文完|好文推荐|相关推荐)/i;
 const EDITABLE_ENGAGEMENT_TAIL_MARKER_PATTERN = /(?:点赞.{0,32}转发|转发.{0,32}点赞)/i;

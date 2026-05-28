@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Workbench } from "@/components/workbench";
 import { ANALYSIS_TEMPLATES } from "@/lib/analysis";
 import { THEME_COOKIE_NAME, THEME_STORAGE_KEY } from "@/lib/theme";
-import type { Article, LocalDraft } from "@/lib/types";
+import type { AgentDraft, AgentStrategy, Article, LocalDraft } from "@/lib/types";
 
 const articles: Article[] = [
   {
@@ -94,6 +94,64 @@ const xiaohongshuDraft: LocalDraft = {
   queueOrder: 1,
 };
 
+const editorialAgentStrategy: AgentStrategy = {
+  id: "agent_strategy_editorial_board",
+  name: "策略一：编辑部流水线",
+  description: "公众号编辑部流水线",
+  targetChannel: "wechat",
+  defaultModel: "",
+  status: "active",
+  modules: [
+    {
+      id: "editorial-chief",
+      name: "主编 Agent",
+      role: "editor_in_chief",
+      order: 1,
+      model: "",
+      prompt: "压出工程判断",
+      enabled: true,
+    },
+    {
+      id: "review",
+      name: "审稿 Agent",
+      role: "review",
+      order: 2,
+      model: "",
+      prompt: "检查事实和可读性",
+      enabled: true,
+    },
+  ],
+  createdAt: "2026-05-28T00:00:00.000Z",
+  updatedAt: "2026-05-28T00:00:00.000Z",
+};
+
+const generatedAgentDraft: AgentDraft = {
+  id: "agent_draft_generated",
+  title: "OpenAI 大神教你如何榨干 Codex",
+  bodyHtml: "<h1>OpenAI 大神教你如何榨干 Codex</h1><p>策略一编辑部生成的正文。</p>",
+  topic: "OpenAI 大神教你如何榨干 Codex",
+  targetChannel: "wechat",
+  sourceArticleIds: ["art_agent", "art_rag"],
+  strategyId: editorialAgentStrategy.id,
+  strategySnapshot: editorialAgentStrategy,
+  runId: "agent_run_generated",
+  review: {
+    score: 88,
+    passed: true,
+    factIssues: [],
+    fakeSceneIssues: [],
+    ctaIssues: [],
+    styleIssues: [],
+    compressionNotes: [],
+    revisionSummary: "已按策略一补足开头、节奏、配图和清单。",
+  },
+  warnings: [],
+  status: "generated",
+  error: "",
+  createdAt: "2026-05-28T09:30:00.000Z",
+  updatedAt: "2026-05-28T09:30:00.000Z",
+};
+
 async function openReaderActions() {
   await userEvent.click(screen.getByRole("button", { name: "素材操作" }));
 }
@@ -158,10 +216,10 @@ describe("Workbench", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "素材库" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "公众号草稿" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "小红书草稿" })).toBeInTheDocument();
-    expect(screen.getByText("2 篇外部引用素材 · 0 篇本地创作文章")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "引用知识库" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "微信公众号" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "小红书" })).toBeInTheDocument();
+    expect(screen.getByText("2 篇引用素材 · 0 篇公众号/小红书作品 · 0 篇 Agent 草稿")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "打开配置中心" })).toHaveAttribute("href", "/settings");
     expect(screen.getByRole("main")).toHaveAttribute("data-theme", "light");
     await userEvent.click(screen.getByRole("button", { name: "切换到深色模式" }));
@@ -231,12 +289,12 @@ describe("Workbench", () => {
     expect(within(screen.getByRole("article")).queryByText("来源：LLM Lab")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "运行高级处理" })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "公众号草稿" }));
+    await userEvent.click(screen.getByRole("button", { name: "微信公众号" }));
 
-    expect(screen.getByRole("heading", { name: "公众号草稿" })).toBeInTheDocument();
-    expect(screen.getByLabelText("微信公众号待提交草稿工作台")).toBeInTheDocument();
-    expect(screen.getByText("没有待提交草稿")).toBeInTheDocument();
-    expect(screen.getByText(/这里只显示待提交草稿/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "微信公众号工作台" })).toBeInTheDocument();
+    expect(screen.getByLabelText("微信公众号内容管理工作台")).toBeInTheDocument();
+    expect(screen.getByText("没有匹配作品")).toBeInTheDocument();
+    expect(screen.getByText(/统一看本地草稿箱/)).toBeInTheDocument();
     expect(screen.queryByText("当前引用素材")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /生成专业长文/ })).not.toBeInTheDocument();
     expect(screen.queryByText("图片模型配置")).not.toBeInTheDocument();
@@ -817,7 +875,7 @@ describe("Workbench", () => {
     expect(within(importDialog).getByRole("button", { name: "手动粘贴" })).toBeInTheDocument();
   });
 
-  it("shows only pending WeChat drafts and saves body edits from the workbench", async () => {
+  it("shows the WeChat content dashboard and saves body edits from the workbench", async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body ?? "{}")) as Partial<LocalDraft>;
       const draftId = url.split("/").pop();
@@ -857,16 +915,20 @@ describe("Workbench", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "公众号草稿" }));
-    const draftList = screen.getByLabelText("待提交草稿文件");
+    await userEvent.click(screen.getByRole("button", { name: "微信公众号" }));
+    const draftList = screen.getByLabelText("微信公众号作品列表");
 
     expect(within(draftList).getByText(queuedWechatDraft.title)).toBeInTheDocument();
     expect(within(draftList).getByText(wechatDraft.title)).toBeInTheDocument();
+    expect(within(draftList).getByText(publishedWechatDraft.title)).toBeInTheDocument();
     expect(within(draftList).getByLabelText("发布顺序 1")).toBeInTheDocument();
     expect(within(draftList).getByLabelText("发布顺序 2")).toBeInTheDocument();
     expect(within(draftList).queryByText("0")).not.toBeInTheDocument();
-    expect(within(draftList).queryByText(publishedWechatDraft.title)).not.toBeInTheDocument();
     expect(within(draftList).queryByText(xiaohongshuDraft.title)).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "草稿箱 1" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "待发布 1" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "已发布 1" })).toBeInTheDocument();
+    expect(screen.getByText("已发布作品")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "生成微信公众号原创稿" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("写作蓝图预览")).not.toBeInTheDocument();
 
@@ -894,7 +956,109 @@ describe("Workbench", () => {
     expect(screen.getAllByText("更适合首篇文章的新开头，正文可以在工作台直接改。").length).toBeGreaterThan(0);
   });
 
-  it("removes a WeChat draft from the pending list after marking it published", async () => {
+  it("generates an Agent draft first and pushes it into local WeChat management on confirmation", async () => {
+    const pushedLocalDraft: LocalDraft = {
+      ...wechatDraft,
+      id: "draft_from_agent",
+      title: generatedAgentDraft.title,
+      body: generatedAgentDraft.bodyHtml,
+      sourceArticleIds: generatedAgentDraft.sourceArticleIds,
+      notes: "来自 Agent 草稿池：策略一：编辑部流水线。选题：OpenAI 大神教你如何榨干 Codex",
+      updatedAt: "2026-05-28T09:35:00.000Z",
+    };
+    const pushedAgentDraft: AgentDraft = {
+      ...generatedAgentDraft,
+      localDraftId: pushedLocalDraft.id,
+      status: "pushed_local",
+      updatedAt: "2026-05-28T09:35:00.000Z",
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/agent/drafts/generate") {
+        return {
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            agentDraft: generatedAgentDraft,
+            agentRun: {
+              id: "agent_run_generated",
+              status: "completed",
+            },
+          }),
+        };
+      }
+      if (url === "/api/agent/drafts/agent_draft_generated/push-local") {
+        return {
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            agentDraft: pushedAgentDraft,
+            draft: pushedLocalDraft,
+          }),
+        };
+      }
+      return {
+        ok: false,
+        json: vi.fn().mockResolvedValue({ error: "unexpected request" }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <Workbench
+        initialArticles={articles}
+        initialAgentStrategies={[editorialAgentStrategy]}
+        initialDrafts={[]}
+        templates={ANALYSIS_TEMPLATES}
+        initialAiSettings={{ baseUrl: "", apiKey: "", model: "" }}
+        initialImageSettings={{
+          baseUrl: "https://api.openai.com/v1",
+          model: "gpt-image-2",
+          size: "1536x1024",
+          hasApiKey: false,
+        }}
+        initialWeChatConfig={{
+          appId: "",
+          appSecret: "",
+          tokenStatus: "unchecked",
+          lastCheckResult: "",
+          updatedAt: "",
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "微信公众号" }));
+    expect(screen.getByLabelText("微信公众号内容管理工作台")).toBeInTheDocument();
+    expect(screen.queryByLabelText("生成工作台")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Agent" }));
+    await userEvent.type(screen.getByLabelText("选题"), "OpenAI 大神教你如何榨干 Codex");
+    await userEvent.selectOptions(screen.getByLabelText("策略"), editorialAgentStrategy.id);
+    await userEvent.click(screen.getByRole("button", { name: "运行 Agent" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/agent/drafts/generate",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining(`"strategyId":"${editorialAgentStrategy.id}"`),
+      }),
+    );
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(requestBody).toMatchObject({
+      topic: "OpenAI 大神教你如何榨干 Codex",
+      targetChannel: "wechat",
+      strategyId: editorialAgentStrategy.id,
+    });
+    expect(requestBody.referenceArticleIds).toEqual(["art_agent", "art_rag"]);
+    expect(await screen.findByText("Agent 草稿已生成：OpenAI 大神教你如何榨干 Codex")).toBeInTheDocument();
+    expect(screen.getAllByText("策略一：编辑部流水线").length).toBeGreaterThan(0);
+    expect(screen.getByText("审稿 88 · 复用提醒 0")).toBeInTheDocument();
+    expect(screen.getAllByDisplayValue(generatedAgentDraft.title).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("策略一编辑部生成的正文。").length).toBeGreaterThan(0);
+
+    await userEvent.click(screen.getByRole("button", { name: "推到本地公众号管理" }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/agent/drafts/agent_draft_generated/push-local", { method: "POST" });
+    expect(await screen.findByText("已推到本地公众号管理：OpenAI 大神教你如何榨干 Codex")).toBeInTheDocument();
+  });
+
+  it("moves a WeChat draft into the published filter after marking it published", async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body ?? "{}")) as Partial<LocalDraft>;
       const draftId = url.split("/").pop();
@@ -934,8 +1098,8 @@ describe("Workbench", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "公众号草稿" }));
-    const draftList = screen.getByLabelText("待提交草稿文件");
+    await userEvent.click(screen.getByRole("button", { name: "微信公众号" }));
+    const draftList = screen.getByLabelText("微信公众号作品列表");
     await userEvent.click(within(draftList).getByText(wechatDraft.title));
     await userEvent.click(screen.getByRole("button", { name: "标为已发布" }));
 
@@ -947,7 +1111,11 @@ describe("Workbench", () => {
       }),
     );
     expect(await screen.findByText(`已标记发布：${wechatDraft.title}`)).toBeInTheDocument();
-    expect(within(draftList).queryByText(wechatDraft.title)).not.toBeInTheDocument();
+    expect(within(draftList).getByText(wechatDraft.title)).toBeInTheDocument();
     expect(within(draftList).getByText(queuedWechatDraft.title)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "已发布 1" }));
+    expect(within(screen.getByLabelText("微信公众号作品列表")).getByText(wechatDraft.title)).toBeInTheDocument();
+    expect(within(screen.getByLabelText("微信公众号作品列表")).queryByText(queuedWechatDraft.title)).not.toBeInTheDocument();
   });
 });

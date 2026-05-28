@@ -24,6 +24,11 @@
 # misc
 .DS_Store
 *.pem
+*.swp
+
+# local generated artifacts
+/outputs/
+exports/wechat-drafts/*.html
 
 # debug
 npm-debug.log*

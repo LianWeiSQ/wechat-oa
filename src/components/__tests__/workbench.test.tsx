@@ -219,7 +219,9 @@ describe("Workbench", () => {
     expect(screen.getByRole("button", { name: "引用知识库" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "微信公众号" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "小红书" })).toBeInTheDocument();
-    expect(screen.getByText("2 篇引用素材 · 0 篇公众号/小红书作品 · 0 篇 Agent 草稿")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agent" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "调研探索" })).toBeInTheDocument();
+    expect(screen.getByText("2 篇引用素材 · 0 篇公众号/小红书作品 · 0 篇 Agent 草稿 · 调研探索已启用")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "打开配置中心" })).toHaveAttribute("href", "/settings");
     expect(screen.getByRole("main")).toHaveAttribute("data-theme", "light");
     await userEvent.click(screen.getByRole("button", { name: "切换到深色模式" }));
@@ -716,6 +718,88 @@ describe("Workbench", () => {
     expect(await screen.findByRole("heading", { name: "Hugging Face 评估指南" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "新增引用素材" })).not.toBeInTheDocument();
     expect(screen.getByText("已保存到引用素材库：Hugging Face 评估指南")).toBeInTheDocument();
+  });
+
+  it("imports research exploration links into the knowledge library", async () => {
+    const importedArticle: Article = {
+      id: "art_research_imported",
+      title: "OpenAI 大神教你如何榨干 Codex",
+      sourceType: "wechat",
+      sourceName: "量子位",
+      sourceProject: "量子位 Codex 调研",
+      sourceAccount: "量子位",
+      originalUrl: "https://mp.weixin.qq.com/s/research-codex",
+      author: "QbitAI",
+      publishedAt: "2026-05-20",
+      contentHtml: "<p>Codex 工作流文章。</p>",
+      contentText: "Codex 工作流文章。",
+      content: "Codex 工作流文章。",
+      category: "AI Agent",
+      isFavorite: false,
+      tags: ["codex", "调研"],
+      createdAt: "2026-05-20T00:00:00.000Z",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        imported: [importedArticle],
+        failed: [],
+        parseRuns: [],
+        summary: { total: 1, imported: 1, failed: 0 },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <Workbench
+        initialArticles={articles}
+        templates={ANALYSIS_TEMPLATES}
+        initialAiSettings={{ baseUrl: "", apiKey: "", model: "" }}
+        initialImageSettings={{
+          baseUrl: "https://api.openai.com/v1",
+          model: "gpt-image-2",
+          size: "1536x1024",
+          hasApiKey: false,
+        }}
+        initialWeChatConfig={{
+          appId: "",
+          appSecret: "",
+          tokenStatus: "unchecked",
+          lastCheckResult: "",
+          updatedAt: "",
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "调研探索" }));
+    expect(screen.getByLabelText("调研探索模块")).toBeInTheDocument();
+    expect(screen.getByText("wxmp / 后台 Cookie + FakeID")).toBeInTheDocument();
+    await userEvent.type(screen.getByPlaceholderText("目标公众号，例如 量子位"), "量子位");
+    await userEvent.type(screen.getByPlaceholderText("项目来源，例如 量子位 Codex 调研"), "量子位 Codex 调研");
+    await userEvent.type(screen.getByPlaceholderText("分类，例如 AI Agent / 模型新闻"), "AI Agent");
+    await userEvent.type(screen.getByPlaceholderText("标签，用逗号分隔"), "codex,调研");
+    await userEvent.type(screen.getByPlaceholderText(/每行一个公众号文章链接/), importedArticle.originalUrl);
+    await userEvent.click(screen.getByRole("button", { name: "导入引用知识库" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/research/import-links",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining(importedArticle.originalUrl),
+      }),
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body).toMatchObject({
+      sourceProject: "量子位 Codex 调研",
+      category: "AI Agent",
+      tags: ["codex", "调研"],
+    });
+    expect(body.urls).toEqual([importedArticle.originalUrl]);
+    expect(await screen.findByText("调研导入完成：1 篇已进入引用知识库")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "引用知识库" }));
+    expect(screen.getByRole("heading", { name: importedArticle.title })).toBeInTheDocument();
   });
 
   it("clears successful import notices after a short delay", async () => {

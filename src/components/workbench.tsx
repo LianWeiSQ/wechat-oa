@@ -6,10 +6,13 @@ import {
   Archive,
   Brain,
   CheckCircle2,
+  Compass,
   Database,
   ChevronDown,
   ChevronUp,
   FileText,
+  Link2,
+  ListChecks,
   MoreHorizontal,
   Moon,
   PanelLeftClose,
@@ -71,7 +74,7 @@ type Notice = {
   text: string;
 };
 
-type Workspace = "library" | "wechat" | "xiaohongshu" | "agent";
+type Workspace = "library" | "wechat" | "xiaohongshu" | "agent" | "research";
 type ImportMode = "url" | "manual";
 type ActiveModal = "analysis" | "import" | "edit" | "manage" | null;
 type ReaderDropdown = "actions" | "filters" | null;
@@ -85,6 +88,11 @@ type LibraryResult = {
   matchedFields: string[];
   score: number;
   snippet: string;
+};
+type ResearchImportSummary = {
+  total: number;
+  imported: number;
+  failed: number;
 };
 type DraftEditorState = {
   title: string;
@@ -415,6 +423,72 @@ export function Workbench({
     setImportFeedback(null);
     setActiveModal(null);
     formElement.reset();
+  }
+
+  async function handleResearchImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const accountName = String(form.get("accountName") ?? "").trim();
+    const sourceProject = String(form.get("sourceProject") ?? "").trim() || (accountName ? `${accountName} 调研探索` : "调研探索素材");
+    const category = String(form.get("category") ?? "").trim();
+    const tags = String(form.get("tags") ?? "")
+      .split(/[，,]/)
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+    const rawLinks = String(form.get("links") ?? "");
+    const urls = rawLinks
+      .split(/\r?\n|,|，/)
+      .map((url) => url.trim())
+      .filter(Boolean);
+
+    if (urls.length === 0) {
+      setNotice({ type: "error", text: "请先粘贴至少一个公众号文章链接" });
+      return;
+    }
+
+    setBusy("research-import");
+    try {
+      const response = await fetch("/api/research/import-links", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ urls, sourceProject, category, tags }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        imported?: Article[];
+        failed?: Array<{ url: string; reason: string }>;
+        parseRuns?: ArticleParseRun[];
+        summary?: ResearchImportSummary;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(data.error ?? "调研素材导入失败");
+      }
+
+      const imported = data.imported ?? [];
+      setArticles((current) => imported.reduce((next, article) => upsertArticle(next, article), current));
+      if (data.parseRuns?.length) {
+        setParseRuns((current) => [...data.parseRuns!, ...current]);
+      }
+      if (imported[0]) {
+        setSelectedId(imported[0].id);
+      }
+      const summary = data.summary ?? { total: urls.length, imported: imported.length, failed: data.failed?.length ?? 0 };
+      setNotice({
+        type: summary.failed > 0 ? "info" : "ok",
+        text:
+          summary.failed > 0
+            ? `调研导入完成：成功 ${summary.imported} 篇，失败 ${summary.failed} 篇`
+            : `调研导入完成：${summary.imported} 篇已进入引用知识库`,
+      });
+      if (summary.imported > 0) {
+        formElement.reset();
+      }
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "调研素材导入失败" });
+    } finally {
+      setBusy(null);
+    }
   }
 
   function openEditModal(article = selectedArticle) {
@@ -1028,6 +1102,12 @@ export function Workbench({
     setReaderDropdown(null);
   }
 
+  function openResearchWorkspace() {
+    setActiveWorkspace("research");
+    setActiveModal(null);
+    setReaderDropdown(null);
+  }
+
   function updateDraftBoardFilter(filter: DraftBoardFilter) {
     setDraftBoardFilter(filter);
     selectDraftForEditing(firstDraftForChannel(localDrafts, activeContentChannel, filter));
@@ -1046,7 +1126,7 @@ export function Workbench({
           <div>
             <div className="brand-title">账号文章系统</div>
             <div className="brand-meta">
-              {articles.length} 篇引用素材 · {localDrafts.length} 篇公众号/小红书作品 · {agentDrafts.length} 篇 Agent 草稿
+              {articles.length} 篇引用素材 · {localDrafts.length} 篇公众号/小红书作品 · {agentDrafts.length} 篇 Agent 草稿 · 调研探索已启用
             </div>
           </div>
         </div>
@@ -1113,6 +1193,13 @@ export function Workbench({
             label="Agent"
             metric={`${agentDrafts.length} 篇`}
             onClick={openAgentWorkspace}
+          />
+          <WorkspaceCommandButton
+            active={activeWorkspace === "research"}
+            detail="方法地图 · 批量链接入库"
+            label="调研探索"
+            metric="采集"
+            onClick={openResearchWorkspace}
           />
         </nav>
       </section>
@@ -1386,6 +1473,8 @@ export function Workbench({
                 selectedAgentStrategy={selectedAgentStrategy}
                 selectedAgentStrategyId={selectedAgentStrategyId}
               />
+            ) : activeWorkspace === "research" ? (
+              <ResearchWorkspace articles={articles} busy={busy} onImportLinks={handleResearchImport} />
             ) : activeWorkspace === "xiaohongshu" ? (
               <XiaohongshuPlaceholder />
             ) : (
@@ -2765,6 +2854,104 @@ function XiaohongshuPlaceholder() {
   );
 }
 
+function ResearchWorkspace({
+  articles,
+  busy,
+  onImportLinks,
+}: {
+  articles: Article[];
+  busy: string | null;
+  onImportLinks: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+}) {
+  const wechatArticleCount = articles.filter((article) => article.sourceType === "wechat").length;
+  const recentResearchProjects = Array.from(
+    new Set(articles.map((article) => article.sourceProject?.trim()).filter((project): project is string => Boolean(project))),
+  ).slice(0, 5);
+
+  return (
+    <section className="research-workspace" aria-label="调研探索模块">
+      <div className="research-hero panel">
+        <div>
+          <div className="panel-title">
+            <Compass className="h-4 w-4 text-[var(--gold)]" />
+            调研探索模块
+          </div>
+          <p className="panel-copy">面向指定公众号做文章收集、方法评估和批量入库。收集到的文章先进入引用知识库，再供 Agent 写作时引用。</p>
+        </div>
+        <div className="research-hero-stats" aria-label="调研入库概览">
+          <span>
+            <strong>{articles.length}</strong>
+            引用素材
+          </span>
+          <span>
+            <strong>{wechatArticleCount}</strong>
+            公众号素材
+          </span>
+        </div>
+      </div>
+
+      <div className="research-grid">
+        <section className="panel research-method-panel" aria-label="公众号采集方法">
+          <div className="panel-title">
+            <ListChecks className="h-4 w-4 text-[var(--gold)]" />
+            采集方法地图
+          </div>
+          <div className="research-method-list">
+            {RESEARCH_METHODS.map((method) => (
+              <article key={method.id} className="research-method-card">
+                <div className="metric-line">
+                  <strong>{method.name}</strong>
+                  <span className={`research-method-badge research-method-badge-${method.status}`}>{method.statusLabel}</span>
+                </div>
+                <p>{method.summary}</p>
+                <ul>
+                  {method.notes.map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel research-import-panel" aria-label="调研链接批量导入">
+          <div className="panel-title">
+            <Link2 className="h-4 w-4 text-[var(--gold)]" />
+            批量导入到知识库
+          </div>
+          <p className="panel-copy">把 wxmp、第三方 API、搜索结果或手工整理出的文章链接粘贴进来，系统会逐篇解析并写入引用知识库。</p>
+          <form className="research-import-form" onSubmit={(event) => void onImportLinks(event)}>
+            <div className="form-grid-two">
+              <input name="accountName" className="field" placeholder="目标公众号，例如 量子位" />
+              <input name="sourceProject" className="field" placeholder="项目来源，例如 量子位 Codex 调研" />
+            </div>
+            <div className="form-grid-two">
+              <input name="category" list="article-category-options" className="field" placeholder="分类，例如 AI Agent / 模型新闻" />
+              <input name="tags" className="field" placeholder="标签，用逗号分隔" />
+            </div>
+            <textarea
+              name="links"
+              className="textarea research-links-field"
+              placeholder={"每行一个公众号文章链接\nhttps://mp.weixin.qq.com/s/...\nhttps://mp.weixin.qq.com/s/..."}
+            />
+            <button type="submit" className="btn btn-primary" disabled={busy === "research-import"}>
+              {busy === "research-import" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              导入引用知识库
+            </button>
+          </form>
+          {recentResearchProjects.length > 0 ? (
+            <div className="research-project-strip" aria-label="最近素材项目">
+              {recentResearchProjects.map((project) => (
+                <span key={project}>{project}</span>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      </div>
+    </section>
+  );
+}
+
 function editableHtmlFromArticle(article: Article): string {
   const contentHtml = article.contentHtml.trim();
   if (/<[a-z][\s\S]*>/i.test(contentHtml)) {
@@ -3147,12 +3334,18 @@ function workspaceKickerLabel(workspace: Workspace, channel: ContentChannel): st
   if (workspace === "agent") {
     return "Agent 编辑部";
   }
+  if (workspace === "research") {
+    return "调研探索";
+  }
   return channelLabel(channel);
 }
 
 function workspaceTitleLabel(workspace: Workspace, channel: ContentChannel): string {
   if (workspace === "agent") {
     return "Agent 工作台";
+  }
+  if (workspace === "research") {
+    return "公众号素材采集";
   }
   if (workspace === "xiaohongshu") {
     return "小红书";
@@ -3429,6 +3622,55 @@ const inputClassName = "field";
 const textareaClassName = "textarea";
 const primaryButtonClassName = "btn btn-primary";
 const secondaryButtonClassName = "btn btn-secondary";
+const RESEARCH_METHODS: Array<{
+  id: string;
+  name: string;
+  status: "ready" | "connect" | "manual";
+  statusLabel: string;
+  summary: string;
+  notes: string[];
+}> = [
+  {
+    id: "official-own-account",
+    name: "微信官方发布接口",
+    status: "connect",
+    statusLabel: "适合自有号",
+    summary: "通过已授权公众号的发布能力读取成功发布列表和正文，稳定但只能覆盖自己的账号。",
+    notes: ["接口方向：freepublish/batchget 与 freepublish/getarticle", "适合沉淀自己账号的历史文章", "不能采集竞品/外部公众号全量历史"],
+  },
+  {
+    id: "wxmp-cookie",
+    name: "wxmp / 后台 Cookie + FakeID",
+    status: "connect",
+    statusLabel: "可接入",
+    summary: "使用登录后的公众平台后台能力搜索公众号、获取 FakeID、拉取文章列表并下载正文。",
+    notes: ["适合指定公众号历史文章调研", "需要手动维护登录 Cookie，过期后重扫", "建议先导出链接清单，再批量导入本系统"],
+  },
+  {
+    id: "third-party-index",
+    name: "第三方索引 API",
+    status: "connect",
+    statusLabel: "付费稳定",
+    summary: "接入提供公众号时间线、详情、互动指标的数据 API，稳定性通常高于自建爬虫。",
+    notes: ["适合长期监控多个账号", "需要 API Key 和费用评估", "先做供应商适配层，避免绑定单一平台"],
+  },
+  {
+    id: "search-rss",
+    name: "搜索/RSS/归档站补漏",
+    status: "manual",
+    statusLabel: "补充路径",
+    summary: "通过搜索引擎、RSSHub、网页归档站补充缺失文章，覆盖不完整但很适合人工校验。",
+    notes: ["适合找爆款旧文或被转载文章", "发布时间和作者信息需要人工核验", "不作为主采集链路"],
+  },
+  {
+    id: "bulk-links",
+    name: "链接清单批量入库",
+    status: "ready",
+    statusLabel: "已实现",
+    summary: "把任何采集工具导出的 mp.weixin.qq.com 链接粘贴进来，直接解析并进入引用知识库。",
+    notes: ["当前模块已支持", "失败链接保留原因，方便手动补录", "导入后 Agent 可直接选择这些文章作为参考"],
+  },
+];
 const AGENT_ROLE_OPTIONS: Array<{ value: AgentStrategyModuleRole; label: string }> = [
   { value: "editor_in_chief", label: "主编" },
   { value: "technical_brief", label: "技术骨架" },

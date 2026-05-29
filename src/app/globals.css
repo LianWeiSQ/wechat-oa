@@ -2483,6 +2483,133 @@ select {
   min-height: 420px;
 }
 
+.research-workspace {
+  display: grid;
+  gap: 16px;
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+.research-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.research-hero-stats {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.research-hero-stats span {
+  display: grid;
+  min-width: 108px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--field-bg);
+  padding: 11px 14px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.research-hero-stats strong {
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 950;
+  line-height: 1.05;
+}
+
+.research-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.95fr) minmax(360px, 1.05fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.research-method-panel,
+.research-import-panel,
+.research-import-form,
+.research-method-list {
+  display: grid;
+  gap: 12px;
+}
+
+.form-grid-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.research-method-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--row-bg);
+  padding: 12px;
+}
+
+.research-method-card strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.research-method-card p,
+.research-method-card li {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.62;
+}
+
+.research-method-card ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.research-method-badge {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.research-method-badge-ready {
+  border-color: rgba(21, 128, 61, 0.28);
+  color: var(--success-text);
+}
+
+.research-method-badge-connect {
+  border-color: rgba(255, 159, 28, 0.34);
+  color: var(--gold);
+}
+
+.research-links-field {
+  min-height: 220px;
+}
+
+.research-project-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.research-project-strip span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--chip-bg);
+  padding: 5px 9px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
 .xiaohongshu-placeholder {
   display: grid;
   min-height: 360px;
@@ -3219,6 +3346,20 @@ select {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .research-hero,
+  .research-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .research-hero {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .form-grid-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .structure-asset-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -3294,8 +3435,8 @@ select {
   }
 
   .workspace-tab {
-    padding: 0 8px;
-    font-size: 13px;
+    padding: 0 6px;
+    font-size: 12px;
   }
 
   .wechat-agent-grid {
